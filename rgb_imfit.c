@@ -90,8 +90,8 @@ enum {
 
 buffer_t vertex_src = { 0, 0, 0 };
 
-size_t num_param_sets = 100;
-size_t num_params = 128;
+size_t num_param_sets = 128;
+size_t num_params = 100;
 
 char common_defines[1024] = "";
 
@@ -1121,7 +1121,7 @@ GLuint setup_param_texture() {
     //////////////////////////////////////////////////////////////////////
     // setup param texture
 
-    image_create(&param_image32f, 3*num_param_sets, num_params, 4, IMAGE_32F);
+    image_create(&param_image32f, num_params*3, num_param_sets, 4, IMAGE_32F);
 
     float hwmax = MAX(src_image32f.width, src_image32f.height);
 
@@ -1234,8 +1234,8 @@ int main(int argc, char** argv) {
 
     fb_setup(&gabor_eval_fb,
              "gabor_eval",
-             src_image32f.width * num_param_sets,
-             src_image32f.height,
+             src_image32f.width,
+             src_image32f.height * num_param_sets,
              GL_RGBA32F,
              "../gabor_eval.glsl", MAX_SOURCE_LENGTH);
 
@@ -1243,8 +1243,8 @@ int main(int argc, char** argv) {
 
     fb_setup(&gabor_compare_fb,
              "gabor_compare",
-             src_image32f.width * num_param_sets,
-             src_image32f.height,
+             src_image32f.width,
+             src_image32f.height * num_param_sets,
              GL_RGBA32F,
              "../gabor_compare.glsl", MAX_SOURCE_LENGTH);
 
@@ -1284,7 +1284,7 @@ int main(int argc, char** argv) {
         snprintf(reduces[i], 1024, "reduce%d", (int)i);
         
         fb_setup(reduce_fbs + i, reduces[i],
-                 w * num_param_sets, h, GL_RGBA32F,
+                 w, h * num_param_sets, GL_RGBA32F,
                  "../reduce.glsl", MAX_SOURCE_LENGTH);
 
         fb_add_input(reduce_fbs + i,
@@ -1317,7 +1317,7 @@ int main(int argc, char** argv) {
 
     }
 
-    image_create(&reduced_image, num_param_sets, 1, 4, IMAGE_32F);
+    image_create(&reduced_image, 1, num_param_sets, 4, IMAGE_32F);
     printf("reduced_image has size %d\n", (int)reduced_image.buf.size);
 
     const int NUM_PROFILE = 1000;
@@ -1339,6 +1339,7 @@ int main(int argc, char** argv) {
                 //fb_screenshot(reduce_fbs + i);
             }
 
+
         }
 
         glFinish();
@@ -1354,6 +1355,7 @@ int main(int argc, char** argv) {
 
         for (size_t i=0; i<num_param_sets; ++i) {
             size_t offs = 4*i;
+            //printf("reduced_image[%d].a = %f\n", (int)i, reduced_image.data_32f[offs+3]);
             require( reduced_image.data_32f[offs + 3] == image_size );
         }
         

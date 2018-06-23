@@ -11,19 +11,19 @@ void main() {
 
     vec2 f = mod(gl_FragCoord.xy, srcDims);
 
-    int param_idx = int(floor( gl_FragCoord.x / srcDims.x ) );
+    int param_idx = int(floor( gl_FragCoord.y / srcDims.y ) );
     
     vec2 p = (f - 0.5*srcDims)*px;
 
     vec3 accum = vec3(0);
 
-    int k = 3*param_idx;
-
     for (int j=0; j<NUM_PARAMS; ++j) {
+
+        int pstart = 3*j;
         
-        vec4 uvst = texelFetch(paramTexture, ivec2(k+0, j), 0);
-        vec4 phir = texelFetch(paramTexture, ivec2(k+1, j), 0);
-        vec4 hl   = texelFetch(paramTexture, ivec2(k+2, j), 0);
+        vec4 uvst = texelFetch(paramTexture, ivec2(pstart+0, param_idx), 0);
+        vec4 phir = texelFetch(paramTexture, ivec2(pstart+1, param_idx), 0);
+        vec4 hl   = texelFetch(paramTexture, ivec2(pstart+2, param_idx), 0);
 
         float s = clamp(uvst.z, px, 2.0);
         float t = clamp(uvst.w, px, 4.0);
