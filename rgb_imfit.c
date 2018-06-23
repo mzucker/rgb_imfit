@@ -110,6 +110,38 @@ framebuffer_t* reduce_fbs = 0;
 
 image_t reduced_image;
 
+enum {
+    GABOR_PARAM_U = 0,
+    GABOR_PARAM_V,
+    GABOR_PARAM_S,
+    GABOR_PARAM_T,
+    GABOR_PARAM_PHI0,
+    GABOR_PARAM_PHI1,
+    GABOR_PARAM_PHI2,
+    GABOR_PARAM_R,
+    GABOR_PARAM_H0,
+    GABOR_PARAM_H1,
+    GABOR_PARAM_H2,
+    GABOR_PARAM_L,
+    GABOR_NUM_PARAMS
+};
+
+// u, v, s, t | phi[3], r | h[3], l
+float param_bounds[GABOR_NUM_PARAMS][2] = {
+    { -2, 2 },
+    { -2, 2 },
+    { 0, 0.25 }, // should be 2
+    { 0, 0.5 },  // should be 4
+    { 0, 2*M_PI },
+    { 0, 2*M_PI },
+    { 0, 2*M_PI },
+    { 0, 2*M_PI },
+    { 0, 2 },
+    { 0, 2 },
+    { 0, 2 },
+    { 0, 4 }
+};
+
 //////////////////////////////////////////////////////////////////////
 
 
@@ -1082,64 +1114,33 @@ float random_float(float min, float max) {
 
 }
 
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+
 GLuint setup_param_texture() {
 
     //////////////////////////////////////////////////////////////////////
     // setup param texture
-    
-    // RGBA = 4 floats per pixel
-    // each column is a separate gabor
-    // every 3 rows is a separate gabor
-    //
-    // so 128 gabors would be 128x3
-    //
-    // we should have a uniform or a define for computing output vs error
-    //
-    // if computing output, just need the params
-    // if computing error, need the input RGB values and weight (A) to compare to
-    //
-    // assume error is sum of squared weighted error
-    //
-    //         sum pixel i, channel j    wi * (pij - ti)^2
-    //  err = -----------------------------------------------
-    //                    sum pixel i    wi
-    //
-    // so we can store the numerator in the red channel
-    // and the weight in the green channel
-    //
-    // if we have a kxk window for summing we can get down to 1x1 in
-    //    log max(h, w) / log k blits
-    //
-    // or can we just autogenerate mipmaps and render at 1x1???
 
     image_create(&param_image32f, 3*num_param_sets, num_params, 4, IMAGE_32F);
 
-    float hwmax = src_image32f.width > src_image32f.height ? src_image32f.width : src_image32f.height;
+    float hwmax = MAX(src_image32f.width, src_image32f.height);
+
     float px = 2.0 / hwmax;
+
+    param_bounds[GABOR_PARAM_S][0] = px;
+    param_bounds[GABOR_PARAM_T][0] = px;
+    
+    param_bounds[GABOR_PARAM_L][0] = 2.5*px;
 
     for (int i=0; i<num_params*num_param_sets; ++i) {
 
         float* pi = param_image32f.data_32f + i*12;
 
-        // uvst
-        pi[0] = random_float(-1, 1);
-        pi[1] = random_float(-1, 1);
-        pi[2] = random_float(px, 0.25);
-        pi[3] = random_float(px, 0.5);
+        for (int j=0; j<12; ++j) {
+            const float* lohi = param_bounds[j];
+            pi[j] = random_float(lohi[0], lohi[1]);
+        }
 
-        // phir
-        pi[4] = random_float(0, 2*M_PI);
-        pi[5] = random_float(0, 2*M_PI);
-        pi[6] = random_float(0, 2*M_PI);
-        pi[7] = random_float(0, 2*M_PI);
-        
-        // hl
-        pi[8] = random_float(0, 2);
-        pi[9] = random_float(0, 2);
-        pi[10] = random_float(0, 2);
-        pi[11] = random_float(2.5*px, 4);
-                             
-        
     }
 
     return make_texture(&param_image32f);
@@ -1338,10 +1339,11 @@ int main(int argc, char** argv) {
                 //fb_screenshot(reduce_fbs + i);
             }
 
-
         }
 
-        double elapsed = glfwGetTime();
+        glFinish();
+
+        double elapsed = glfwGetTime() - start;
 
         printf("ran %d frames in %.4f seconds (%.4f ms/frame)\n",
                NUM_PROFILE, elapsed, 1000*elapsed/NUM_PROFILE);
