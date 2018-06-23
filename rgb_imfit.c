@@ -85,15 +85,13 @@ typedef struct framebuffer {
 
 enum {
     MAX_SOURCE_LENGTH = 1024*1024,
-    EVAL_TILES = 4,
-    SUM_WINDOW_SIZE = 4,
+    SUM_WINDOW_SIZE = 2
 };
 
 buffer_t vertex_src = { 0, 0, 0 };
 
-size_t num_param_sets = 4;
-size_t num_params = 16;
-size_t params_per_tile;
+size_t num_param_sets = 100;
+size_t num_params = 128;
 
 char common_defines[1024] = "";
 
@@ -815,7 +813,7 @@ GLFWwindow* setup_window() {
     glfwWindowHint(GLFW_DOUBLEBUFFER, GL_TRUE);
 
     // hidden window
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_VISIBLE, GL_FALSE);
     
     GLFWwindow* window = glfwCreateWindow(640, 480, "", NULL, NULL);
 
@@ -1218,14 +1216,10 @@ int main(int argc, char** argv) {
     //////////////////////////////////////////////////////////////////////
     // setup common defines
 
-    params_per_tile = ceil((float)num_params / EVAL_TILES);
-
     snprintf(common_defines, sizeof(common_defines),
              "#define NUM_PARAMS %d\n"
-             "#define EVAL_TILES %d\n"
-             "#define PARAMS_PER_TILE %d\n"
              "#define SUM_WINDOW_SIZE %d\n",
-             (int)num_params, EVAL_TILES, (int)params_per_tile, SUM_WINDOW_SIZE);
+             (int)num_params, SUM_WINDOW_SIZE);
 
     printf("common_defines is:\n%s", common_defines);
              
@@ -1240,33 +1234,11 @@ int main(int argc, char** argv) {
     fb_setup(&gabor_eval_fb,
              "gabor_eval",
              src_image32f.width * num_param_sets,
-             src_image32f.height * EVAL_TILES, 
+             src_image32f.height,
              GL_RGBA32F,
              "../gabor_eval.glsl", MAX_SOURCE_LENGTH);
 
     fb_add_input(&gabor_eval_fb, "paramTexture", param_tex);
-
-    GLuint summed_gabor;
-
-    if (EVAL_TILES == 1) {
-
-        summed_gabor = gabor_eval_fb.render_texture;
-
-    } else {
-
-        fb_setup(&gabor_sum_fb,
-                 "gabor_sum",
-                 src_image32f.width * num_param_sets,
-                 src_image32f.height,
-                 GL_RGBA32F,
-                 "../gabor_sum.glsl", MAX_SOURCE_LENGTH);
-
-        fb_add_input(&gabor_sum_fb, "evalTexture",
-                     gabor_eval_fb.render_texture);
-
-        summed_gabor = gabor_sum_fb.render_texture;
-
-    }
 
     fb_setup(&gabor_compare_fb,
              "gabor_compare",
@@ -1276,7 +1248,7 @@ int main(int argc, char** argv) {
              "../gabor_compare.glsl", MAX_SOURCE_LENGTH);
 
     fb_add_input(&gabor_compare_fb, "approxTexture",
-                 summed_gabor);
+                 gabor_eval_fb.render_texture);
 
     fb_add_input(&gabor_compare_fb, "srcTexture",
                  src_texture);
@@ -1346,33 +1318,43 @@ int main(int argc, char** argv) {
 
     image_create(&reduced_image, num_param_sets, 1, 4, IMAGE_32F);
     printf("reduced_image has size %d\n", (int)reduced_image.buf.size);
+
+    const int NUM_PROFILE = 1000;
     
     while (!glfwWindowShouldClose(window)) {
 
-        fb_draw(&gabor_eval_fb);
-        fb_screenshot(&gabor_eval_fb);
+        double start = glfwGetTime();
 
-        if (EVAL_TILES > 1) {
-            fb_draw(&gabor_sum_fb);
-            fb_screenshot(&gabor_sum_fb);
+        for (int i=0; i<NUM_PROFILE; ++i) {
+
+            fb_draw(&gabor_eval_fb);
+            //fb_screenshot(&gabor_eval_fb);
+
+            fb_draw(&gabor_compare_fb);
+            //fb_screenshot(&gabor_compare_fb);
+
+            for (size_t i=0; i<num_reduce; ++i) {
+                fb_draw(reduce_fbs + i);
+                //fb_screenshot(reduce_fbs + i);
+            }
+
+
         }
 
-        fb_draw(&gabor_compare_fb);
-        fb_screenshot(&gabor_compare_fb);
+        double elapsed = glfwGetTime();
 
-        for (size_t i=0; i<num_reduce; ++i) {
-            fb_draw(reduce_fbs + i);
-            fb_screenshot(reduce_fbs + i);
-        }
+        printf("ran %d frames in %.4f seconds (%.4f ms/frame)\n",
+               NUM_PROFILE, elapsed, 1000*elapsed/NUM_PROFILE);
 
         read_pixels(&reduced_image);
+        
+        float image_size = src_image32f.width * src_image32f.height;
 
         for (size_t i=0; i<num_param_sets; ++i) {
             size_t offs = 4*i;
-            printf("reduced image alpha channel for ch. %d is %f\n",
-                   (int)i, reduced_image.data_32f[offs + 3]);
+            require( reduced_image.data_32f[offs + 3] == image_size );
         }
-
+        
         return 0;
         
         printf("foo!\n");

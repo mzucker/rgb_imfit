@@ -10,21 +10,16 @@ void main() {
     float px = 2.0/maxDim;
 
     vec2 f = mod(gl_FragCoord.xy, srcDims);
-    int tile_idx = int(floor( gl_FragCoord.y / srcDims.y ) );
+
     int param_idx = int(floor( gl_FragCoord.x / srcDims.x ) );
     
     vec2 p = (f - 0.5*srcDims)*px;
-
-    int start_param = tile_idx * PARAMS_PER_TILE;
 
     vec3 accum = vec3(0);
 
     int k = 3*param_idx;
 
-    for (int i=0; i<PARAMS_PER_TILE; ++i) {
-        
-        int j = i + start_param;
-        if (j >= NUM_PARAMS) { continue; }
+    for (int j=0; j<NUM_PARAMS; ++j) {
         
         vec4 uvst = texelFetch(paramTexture, ivec2(k+0, j), 0);
         vec4 phir = texelFetch(paramTexture, ivec2(k+1, j), 0);
