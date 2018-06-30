@@ -1,6 +1,7 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
+#include <unistd.h>
 #include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -133,7 +134,9 @@ image_t reduced_image32f;
 typedef struct anneal_info {
     int iteration;
     float prev_cost;
-    float k_t;
+    double t_max;
+    double t_rate;
+    float p_init;
     float mutate_amount;
     image_t good_params32f;
 } anneal_info_t;
@@ -1538,7 +1541,24 @@ void annealing_init() {
 
     anneal.iteration = 0;
     anneal.prev_cost = -1;
-    anneal.k_t = 1000;
+
+    const double p_init = 0.001;
+    const double delta_init = -0.05;
+
+    // p_init = exp(delta_init / T)
+    // log( p_init ) = delta_init / T
+    // T = delta_init / log(p_init)
+
+    const double max_iter = 1000000;
+    const double temp_decrease = 1e-4;
+    // exp(-max_iter*t_rate) = temp_decrease
+    // -max_iter*t_rate = log(temp_decrease)
+    // t_rate = -log(temp_decrease)/max_iter
+    
+    anneal.t_max = delta_init / log(p_init);
+    anneal.t_rate = -log(temp_decrease) / max_iter;
+
+    anneal.p_init = 0.01;
     anneal.mutate_amount = 0.01;
 
     image_copy(&anneal.good_params32f, &param_image32f);
@@ -1561,7 +1581,7 @@ void annealing_move() {
     
     float r = random_float();
 
-    if (r < 0.01) {
+    if (r < anneal.p_init) {
         init_params(pi);
     } else {
         mutate_params(pi, anneal.mutate_amount);
@@ -1589,9 +1609,20 @@ void annealing_verify() {
 
     int keep = 0;
 
-    if (cur_cost < anneal.prev_cost) {
+    double delta_cost = anneal.prev_cost - cur_cost;
+
+    if (delta_cost > 0) {
         printf("improved, keeping it!\n");
         keep = 1;
+    } else {
+        double temperature = anneal.t_max * exp(-anneal.t_rate * anneal.iteration);
+        float p_keep = exp(delta_cost / temperature);
+        printf("for delta_cost=%g, p_keep=%g with temp=%g\n",
+               delta_cost, p_keep, temperature);
+        if (random_float() < p_keep) {
+            printf("accepted!\n");
+            keep = 1;
+        }
     }
 
     if (keep) {
@@ -1621,28 +1652,43 @@ void solve(GLFWwindow* window) {
     require(solver == SOLVER_ANNEALING);
     annealing_init();
 
-    while (!glfwWindowShouldClose(window)) {
+    int done = 0;
 
-        if (anneal.iteration % 1000 == 0) {
+    while (!done) {
+
+        for (int i=0; i<100; ++i) {
+
+            if (glfwWindowShouldClose(window)) {
+                done = 1;
+                break;
+            }
+
+            if (anneal.iteration % 1000 == 0) {
+                
+                gabor_eval_fb.request_screenshot = 1;
+                gabor_compare_fb.request_screenshot = 1;
             
-            gabor_eval_fb.request_screenshot = 1;
-            gabor_compare_fb.request_screenshot = 1;
+                memcpy(param_image32f.buf.data,
+                       (const char*)anneal.good_params32f.buf.data,
+                       param_image32f.buf.size);
+                
+                compute();
+                
+            }
 
-            memcpy(param_image32f.buf.data,
-                   (const char*)anneal.good_params32f.buf.data,
-                   param_image32f.buf.size);
-
+            annealing_move();
+            
             compute();
             
+            annealing_verify();
+
+            glfwPollEvents();
+
+
         }
 
-        annealing_move();
+        usleep(1000);
         
-        compute();
-        
-        annealing_verify();
-
-        glfwPollEvents();
 
         /*
         double start = glfwGetTime();
