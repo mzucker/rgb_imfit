@@ -15,8 +15,6 @@ void main() {
 
     fragColor = vec4(0);
 
-    const float scl = 1. / float(SUM_WINDOW_SIZE * SUM_WINDOW_SIZE);
-
     // loop over window size
     for (int y=0; y<SUM_WINDOW_SIZE; ++y) {
         for (int x=0; x<SUM_WINDOW_SIZE; ++x) {
@@ -27,13 +25,11 @@ void main() {
 
                 vec4 t = texelFetch(inputTexture, q + q0_base, 0);
 
-                fragColor.xyz += t.xyz * t.w;
-                fragColor.w += t.w;
+                fragColor += t;
                 
             }
 
         }
     }
-
     
 }

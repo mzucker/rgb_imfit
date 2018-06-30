@@ -13,7 +13,7 @@ void main() {
 
     vec3 diff = src - approx;
 
-    // TODO shove weight in alpha component
-    fragColor = vec4(vec3(dot(diff, diff)), 1);
+    const float w = 1.;
+    fragColor = vec4(vec3(dot(diff, diff)*w), w);
 
 }

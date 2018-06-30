@@ -17,7 +17,7 @@ void main() {
 
     vec3 accum = vec3(0);
 
-    for (int j=0; j<NUM_PARAMS; ++j) {
+    for (int j=0; j<GABORS_PER_TILE; ++j) {
 
         int pstart = 3*j;
         
