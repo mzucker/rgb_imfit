@@ -99,7 +99,7 @@ typedef enum solver_type {
 
 buffer_t vertex_src = { 0, 0, 0 };
 
-size_t gabors_per_tile = 32;
+size_t gabors_per_tile = 256;
 
 #ifdef __APPLE__
 size_t num_tiles = 100;
@@ -117,6 +117,7 @@ GLuint vertex_shader, gabor_fragment_shader;
 
 image_t src_image8u;
 image_t src_image32f;
+
 image_t param_image32f;
 
 float px;
@@ -128,6 +129,8 @@ framebuffer_t gabor_compare_fb;
 size_t num_reduce = 0;
 framebuffer_t* reduce_fbs = 0;
 char* reduce_names = 0;
+
+framebuffer_t main_fb;
 
 image_t reduced_image32f;
 
@@ -927,10 +930,20 @@ GLFWwindow* setup_window() {
 
     glfwWindowHint(GLFW_DOUBLEBUFFER, GL_TRUE);
 
-    // hidden window
-    glfwWindowHint(GLFW_VISIBLE, GL_FALSE);
+    int w = 3*src_image32f.width, h = src_image32f.height;
+
+    int k = 1600/w;
     
-    GLFWwindow* window = glfwCreateWindow(640, 480, "", NULL, NULL);
+    if (k > 1) {
+        w *= k;
+        h *= k;
+    }
+    
+
+    printf("creating window of size %d %d\n", w, h);
+
+    GLFWwindow* window = glfwCreateWindow(w, h,
+                                          "foo", NULL, NULL);
 
     glfwMakeContextCurrent(window);
 #ifdef ST_GLFW_USE_GLEW
@@ -1015,28 +1028,39 @@ void fb_setup(framebuffer_t* fb,
     fb->height = height;
     fb->internal_format = internal_format;
 
+        
     fb->num_inputs = 0;
     fb->program = 0;
+
+    if (fb->internal_format != GL_NONE) {
     
-    glGenTextures(1, &fb->render_texture);
-    glGenFramebuffers(1, &fb->framebuffer);
+        glGenTextures(1, &fb->render_texture);
+        glGenFramebuffers(1, &fb->framebuffer);
 
-    glBindTexture(GL_TEXTURE_2D, fb->render_texture);
+        glBindTexture(GL_TEXTURE_2D, fb->render_texture);
 
-    glTexStorage2D(GL_TEXTURE_2D, 1, internal_format,
-                   width, height);
+        glTexStorage2D(GL_TEXTURE_2D, 1, internal_format,
+                       width, height);
             
-    glBindFramebuffer(GL_FRAMEBUFFER, fb->framebuffer);
+        glBindFramebuffer(GL_FRAMEBUFFER, fb->framebuffer);
     
-    glFramebufferTexture2D(GL_FRAMEBUFFER,
-                           GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D,
-                           fb->render_texture,
-                           0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER,
+                               GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D,
+                               fb->render_texture,
+                               0);
     
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 
-    require(status == GL_FRAMEBUFFER_COMPLETE);
+        require(status == GL_FRAMEBUFFER_COMPLETE);
+
+    } else {
+
+        fb->render_texture = 0;
+        fb->framebuffer = 0;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    }
 
     check_opengl_errors("setup framebuffer");
 
@@ -1176,6 +1200,14 @@ void fb_draw(framebuffer_t* fb) {
 
     }
 
+    if (fb->internal_format == GL_NONE) {
+        // main
+        GLint odims[2] = { fb->width, fb->height };
+        GLint output_dims = glGetUniformLocation(fb->program, "outputDims");
+        glUniform2iv(output_dims, 1, odims);
+    }
+    
+
     check_opengl_errors("use framebuffer");
 
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_BYTE, (void*)0);
@@ -1270,8 +1302,6 @@ void init_params(float pi[GABOR_NUM_PARAMS]) {
     pi[GABOR_PARAM_T] = t;
     pi[GABOR_PARAM_L] = l;
         
-    printf("s=%g, t=%g, l=%g\n", s, t, l);
-
     require(l >= l0_scl*s);
     require(l <= l1_scl*s);
         
@@ -1411,7 +1441,7 @@ void setup_vertex_stuff() {
 
 }
 
-void setup_framebuffers() {
+void setup_framebuffers(GLFWwindow* window) {
 
     snprintf(common_defines, sizeof(common_defines),
              "#define GABORS_PER_TILE %d\n"
@@ -1514,6 +1544,20 @@ void setup_framebuffers() {
     image_create(&reduced_image32f, 1, num_tiles, 4, IMAGE_32F);
     printf("reduced_image32f has size %d\n", (int)reduced_image32f.buf.size);
 
+    int mw, mh;
+    
+    glfwGetFramebufferSize(window, &mw, &mh);
+
+    fb_setup(&main_fb,
+             "main",
+             mw, mh,
+             GL_NONE,
+             "../visualize.glsl", MAX_SOURCE_LENGTH);
+
+    fb_add_input(&main_fb, "srcTexture", src_image32f.bound_texture);
+    fb_add_input(&main_fb, "approxTexture", gabor_eval_fb.render_texture);
+    fb_add_input(&main_fb, "errorTexture", gabor_compare_fb.render_texture);
+
 }
 
 void compute() {
@@ -1542,21 +1586,27 @@ void annealing_init() {
     anneal.iteration = 0;
     anneal.prev_cost = -1;
 
-    const double p_init = 0.001;
-    const double delta_init = -0.05;
+    const double p_init = 0.5;
+    const double delta_init = -0.0001;
 
     // p_init = exp(delta_init / T)
     // log( p_init ) = delta_init / T
     // T = delta_init / log(p_init)
 
-    const double max_iter = 1000000;
+    const double max_iter = 1e7; // 10 million
     const double temp_decrease = 1e-4;
+
     // exp(-max_iter*t_rate) = temp_decrease
     // -max_iter*t_rate = log(temp_decrease)
     // t_rate = -log(temp_decrease)/max_iter
     
     anneal.t_max = delta_init / log(p_init);
     anneal.t_rate = -log(temp_decrease) / max_iter;
+
+    printf("p_init = %g, exp(delta_init / T) = %g\n",
+           p_init, exp(delta_init / anneal.t_max));
+
+    printf("t_max = %g\n", anneal.t_max);
 
     anneal.p_init = 0.01;
     anneal.mutate_amount = 0.01;
@@ -1595,10 +1645,10 @@ void annealing_verify() {
     float denom = reduced_image32f.data_32f[3];
     float cur_cost = num / denom;
 
-    printf("num = %g, denom = %g\n", num, denom);
-    printf("cur_cost at iteration %d = %g (%g prev)\n",
-           anneal.iteration, cur_cost, anneal.prev_cost);
-
+    //printf("num = %g, denom = %g\n", num, denom);
+    //printf("cur_cost at iteration %d = %g (%g prev)\n",
+    //anneal.iteration, cur_cost, anneal.prev_cost);
+    
     int first = (anneal.iteration == 0);
     ++anneal.iteration;
 
@@ -1612,22 +1662,22 @@ void annealing_verify() {
     double delta_cost = anneal.prev_cost - cur_cost;
 
     if (delta_cost > 0) {
-        printf("improved, keeping it!\n");
+        //printf("improved, keeping it!\n");
         keep = 1;
     } else {
         double temperature = anneal.t_max * exp(-anneal.t_rate * anneal.iteration);
         float p_keep = exp(delta_cost / temperature);
-        printf("for delta_cost=%g, p_keep=%g with temp=%g\n",
-               delta_cost, p_keep, temperature);
+        //printf("for delta_cost=%g, p_keep=%g with temp=%g\n",
+        //delta_cost, p_keep, temperature);
         if (random_float() < p_keep) {
-            printf("accepted!\n");
+            //printf("accepted!\n");
             keep = 1;
         }
     }
 
     if (keep) {
         
-        printf("updating cost!\n");
+        //printf("updating cost!\n");
         anneal.prev_cost = cur_cost;
 
         memcpy(anneal.good_params32f.buf.data,
@@ -1636,7 +1686,7 @@ void annealing_verify() {
         
     } else {
         
-        printf("reverting texture!\n");
+        //printf("reverting texture!\n");
 
         memcpy(param_image32f.buf.data,
                (const char*)anneal.good_params32f.buf.data,
@@ -1646,6 +1696,16 @@ void annealing_verify() {
     
 }
 
+void anneal_info(double elapsed, int num_iter) {
+
+    double temperature = anneal.t_max * exp(-anneal.t_rate * anneal.iteration);
+    
+    printf("ran %d iterations in %g seconds (%g ms/iter); "
+           "at iteration %d, cost is %g and temperature is %g\n",
+           num_iter, elapsed, 1000*elapsed/num_iter,
+           anneal.iteration, anneal.prev_cost, temperature);
+
+}
 
 void solve(GLFWwindow* window) {
 
@@ -1656,24 +1716,31 @@ void solve(GLFWwindow* window) {
 
     while (!done) {
 
-        for (int i=0; i<100; ++i) {
+        memcpy(param_image32f.buf.data,
+               (const char*)anneal.good_params32f.buf.data,
+               param_image32f.buf.size);
+        
+        compute();
+
+        int w, h;
+        glfwGetFramebufferSize(window, &w, &h);
+
+        main_fb.width = w;
+        main_fb.height = h;
+
+        fb_draw(&main_fb);
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+
+        double start = glfwGetTime();
+        const int iter_per_update = 1000;
+        
+        for (int i=0; i<iter_per_update; ++i) {
 
             if (glfwWindowShouldClose(window)) {
                 done = 1;
                 break;
-            }
-
-            if (anneal.iteration % 1000 == 0) {
-                
-                gabor_eval_fb.request_screenshot = 1;
-                gabor_compare_fb.request_screenshot = 1;
-            
-                memcpy(param_image32f.buf.data,
-                       (const char*)anneal.good_params32f.buf.data,
-                       param_image32f.buf.size);
-                
-                compute();
-                
             }
 
             annealing_move();
@@ -1682,13 +1749,11 @@ void solve(GLFWwindow* window) {
             
             annealing_verify();
 
-            glfwPollEvents();
-
-
         }
 
-        usleep(1000);
-        
+        double elapsed = glfwGetTime() - start;
+
+        anneal_info(elapsed, iter_per_update);
 
         /*
         double start = glfwGetTime();
@@ -1737,7 +1802,7 @@ int main(int argc, char** argv) {
 
     pcg32_srandom_r(&rng_global, tv.tv_sec, tv.tv_usec);
 
-    get_options(argc, argv);
+    get_options(argc, argv);    
 
     GLFWwindow* window = setup_window();
 
@@ -1747,7 +1812,7 @@ int main(int argc, char** argv) {
              
     setup_vertex_stuff();
 
-    setup_framebuffers();
+    setup_framebuffers(window);
 
     solve(window);
 
