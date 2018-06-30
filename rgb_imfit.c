@@ -76,7 +76,7 @@ typedef struct framebuffer {
     GLenum inputs[MAX_INPUTS];
 
     GLuint program;
-    
+
 } framebuffer_t;
     
 
@@ -90,8 +90,15 @@ enum {
 
 buffer_t vertex_src = { 0, 0, 0 };
 
-size_t num_param_sets = 128;
-size_t num_params = 100;
+size_t num_params = 128;
+
+#ifdef __APPLE__
+size_t num_param_sets = 100;
+size_t num_profile = 10;
+#else
+size_t num_param_sets = 100;
+size_t num_profile = 1000;
+#endif
 
 char common_defines[1024] = "";
 
@@ -107,8 +114,9 @@ framebuffer_t gabor_compare_fb;
 
 size_t num_reduce = 0;
 framebuffer_t* reduce_fbs = 0;
+char* reduce_names = 0;
 
-image_t reduced_image;
+image_t reduced_image32f;
 
 enum {
     GABOR_PARAM_U = 0,
@@ -781,6 +789,22 @@ GLenum gl_internal_format(GLenum format, GLenum datatype) {
 
 //////////////////////////////////////////////////////////////////////
 
+// should already be bound!
+void upload_texture(const image_t* image) {
+
+    GLenum format = gl_format(image->channels);
+    GLenum datatype = gl_datatype(image->type);
+
+    glBindTexture(GL_TEXTURE_2D, image->bound_texture);
+    
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                    image->width, image->height,
+                    format, datatype,
+                    image->buf.data);
+
+
+}
+
 GLuint make_texture(image_t* image) {
 
     GLuint texname;
@@ -795,14 +819,10 @@ GLuint make_texture(image_t* image) {
         
     glTexStorage2D(GL_TEXTURE_2D, 1, internal_format,
                    image->width, image->height);
-    
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                    image->width, image->height,
-                    format, datatype,
-                    image->buf.data);
 
     image->bound_texture = texname;
-
+    upload_texture(image);
+    
     check_opengl_errors("make texture32f!");
 
     return texname;
@@ -938,11 +958,6 @@ void fb_setup(framebuffer_t* fb,
 
     glBindTexture(GL_TEXTURE_2D, fb->render_texture);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    
     glTexStorage2D(GL_TEXTURE_2D, 1, internal_format,
                    width, height);
             
@@ -1192,30 +1207,7 @@ void setup_vertex_stuff() {
 
 }
 
-//////////////////////////////////////////////////////////////////////
-
-int main(int argc, char** argv) {
-
-    srand(time(NULL));
-
-    memset(&src_image8u, 0, sizeof(src_image8u));
-    memset(&src_image32f, 0, sizeof(src_image32f));
-    memset(&param_image32f, 0, sizeof(param_image32f));
-    
-    memset(&gabor_eval_fb, 0, sizeof(gabor_eval_fb));
-    memset(&gabor_sum_fb, 0, sizeof(gabor_sum_fb));
-    memset(&reduced_image, 0, sizeof(reduced_image));
-
-    get_options(argc, argv);
-
-    GLFWwindow* window = setup_window();
-
-    GLuint src_texture = make_texture(&src_image32f);
-
-    GLuint param_tex = setup_param_texture();
-
-    //////////////////////////////////////////////////////////////////////
-    // setup common defines
+void setup_framebuffers() {
 
     snprintf(common_defines, sizeof(common_defines),
              "#define NUM_PARAMS %d\n"
@@ -1223,15 +1215,9 @@ int main(int argc, char** argv) {
              (int)num_params, SUM_WINDOW_SIZE);
 
     printf("common_defines is:\n%s", common_defines);
-             
-    //////////////////////////////////////////////////////////////////////
-    // setup vertex shader and vertex array object
 
-    setup_vertex_stuff();
+    ////////////////////////////////////////////////////////////
     
-    //////////////////////////////////////////////////////////////////////
-    // setup Gabor eval program
-
     fb_setup(&gabor_eval_fb,
              "gabor_eval",
              src_image32f.width,
@@ -1239,8 +1225,10 @@ int main(int argc, char** argv) {
              GL_RGBA32F,
              "../gabor_eval.glsl", MAX_SOURCE_LENGTH);
 
-    fb_add_input(&gabor_eval_fb, "paramTexture", param_tex);
+    fb_add_input(&gabor_eval_fb, "paramTexture", param_image32f.bound_texture);
 
+    ////////////////////////////////////////////////////////////
+    
     fb_setup(&gabor_compare_fb,
              "gabor_compare",
              src_image32f.width,
@@ -1252,8 +1240,9 @@ int main(int argc, char** argv) {
                  gabor_eval_fb.render_texture);
 
     fb_add_input(&gabor_compare_fb, "srcTexture",
-                 src_texture);
+                 src_image32f.bound_texture);
 
+    ////////////////////////////////////////////////////////////
     // set up reduce buffers
     
     num_reduce = 0;
@@ -1266,7 +1255,7 @@ int main(int argc, char** argv) {
     }
 
     reduce_fbs = calloc(num_reduce, sizeof(framebuffer_t));
-    char reduces[num_reduce][1024];
+    reduce_names = calloc(num_reduce, 32);
     
     w = src_image32f.width;
     h = src_image32f.height;
@@ -1281,9 +1270,11 @@ int main(int argc, char** argv) {
         w = ceil( w / SUM_WINDOW_SIZE );
         h = ceil( h / SUM_WINDOW_SIZE );
 
-        snprintf(reduces[i], 1024, "reduce%d", (int)i);
+        char* reduce_name = reduce_names + 32*i;
+
+        snprintf(reduce_name, 32, "reduce%d", (int)i);
         
-        fb_setup(reduce_fbs + i, reduces[i],
+        fb_setup(reduce_fbs + i, reduce_name,
                  w, h * num_param_sets, GL_RGBA32F,
                  "../reduce.glsl", MAX_SOURCE_LENGTH);
 
@@ -1297,6 +1288,7 @@ int main(int argc, char** argv) {
         require( input_dims != -1 );
 
         int idims[2] = { prev_w, prev_h };
+        int odims[2] = { w, h };
 
         glUniform2iv(input_dims, 1, idims);
 
@@ -1307,8 +1299,6 @@ int main(int argc, char** argv) {
 
         require( output_dims != -1 );
 
-        int odims[2] = { w, h };
-
         glUniform2iv(output_dims, 1, odims);
 
         printf("  set output_dims to %d, %d\n", odims[0], odims[1]);
@@ -1317,29 +1307,64 @@ int main(int argc, char** argv) {
 
     }
 
-    image_create(&reduced_image, 1, num_param_sets, 4, IMAGE_32F);
-    printf("reduced_image has size %d\n", (int)reduced_image.buf.size);
+    image_create(&reduced_image32f, 1, num_param_sets, 4, IMAGE_32F);
+    printf("reduced_image32f has size %d\n", (int)reduced_image32f.buf.size);
 
-    const int NUM_PROFILE = 1000;
+}
+
+void compute() {
+
+    // don't forget inequalities:
+    //  s >= l/32, s < l/2
+    //  t > s,     t < 8s (basically a pyramid in 3D)
     
+    upload_texture(&param_image32f);
+
+    fb_draw(&gabor_eval_fb);
+    fb_draw(&gabor_compare_fb);
+
+    for (size_t i=0; i<num_reduce; ++i) {
+        fb_draw(reduce_fbs + i);
+    }
+
+    read_pixels(&reduced_image32f);
+
+}
+    
+//////////////////////////////////////////////////////////////////////
+
+int main(int argc, char** argv) {
+
+    srand(time(NULL));
+
+    memset(&src_image8u, 0, sizeof(src_image8u));
+    memset(&src_image32f, 0, sizeof(src_image32f));
+    memset(&param_image32f, 0, sizeof(param_image32f));
+    
+    memset(&gabor_eval_fb, 0, sizeof(gabor_eval_fb));
+    memset(&gabor_sum_fb, 0, sizeof(gabor_sum_fb));
+    memset(&reduced_image32f, 0, sizeof(reduced_image32f));
+
+    get_options(argc, argv);
+
+    GLFWwindow* window = setup_window();
+
+    make_texture(&src_image32f);
+
+    setup_param_texture();
+             
+    setup_vertex_stuff();
+
+    setup_framebuffers();
+
     while (!glfwWindowShouldClose(window)) {
 
         double start = glfwGetTime();
 
-        for (int i=0; i<NUM_PROFILE; ++i) {
+        for (size_t i=0; i<num_profile; ++i) {
 
-            fb_draw(&gabor_eval_fb);
-            //fb_screenshot(&gabor_eval_fb);
-
-            fb_draw(&gabor_compare_fb);
-            //fb_screenshot(&gabor_compare_fb);
-
-            for (size_t i=0; i<num_reduce; ++i) {
-                fb_draw(reduce_fbs + i);
-                //fb_screenshot(reduce_fbs + i);
-            }
-
-
+            compute();
+            
         }
 
         glFinish();
@@ -1347,16 +1372,16 @@ int main(int argc, char** argv) {
         double elapsed = glfwGetTime() - start;
 
         printf("ran %d frames in %.4f seconds (%.4f ms/frame)\n",
-               NUM_PROFILE, elapsed, 1000*elapsed/NUM_PROFILE);
+               (int)num_profile, elapsed,
+               1000*elapsed/num_profile);
 
-        read_pixels(&reduced_image);
         
         float image_size = src_image32f.width * src_image32f.height;
 
         for (size_t i=0; i<num_param_sets; ++i) {
             size_t offs = 4*i;
-            //printf("reduced_image[%d].a = %f\n", (int)i, reduced_image.data_32f[offs+3]);
-            require( reduced_image.data_32f[offs + 3] == image_size );
+            //printf("reduced_image32f[%d].a = %f\n", (int)i, reduced_image32f.data_32f[offs+3]);
+            require( reduced_image32f.data_32f[offs + 3] == image_size );
         }
         
         return 0;
