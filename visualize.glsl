@@ -5,6 +5,7 @@ uniform sampler2D errorTexture;
 
 uniform sampler2D palette;
 
+uniform ivec2 srcDims;
 uniform ivec2 outputDims;
 
 void main() {
@@ -13,7 +14,6 @@ void main() {
 
     const ivec2 tiles = ivec2(2, 1);
     
-    ivec2 srcDims = textureSize(approxTexture, 0);
     ivec2 tiledSrcDims = srcDims*tiles;
 
     ivec2 r = outputDims / tiledSrcDims;

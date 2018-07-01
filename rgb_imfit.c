@@ -1187,13 +1187,6 @@ void fb_setup(framebuffer_t* fb,
     }    
     */
     
-    GLint src_dims = glGetUniformLocation(program, "srcDims");
-    if (src_dims != -1) {
-        float dims[2] = { src_image32f.width, src_image32f.height };
-        printf("  found srcDims uniform, setting to %f %f!\n",
-               dims[0], dims[1]);
-        glUniform2fv(src_dims, 1, dims);
-    }
 
     GLint vpos_location = glGetAttribLocation(program, "vertexPosition");
     require(vpos_location != -1);
@@ -1297,14 +1290,28 @@ void fb_enqueue_uupdate_i(framebuffer_t* fb,
 
 }
 
-//////////////////////////////////////////////////////////////////////
+void fb_enqueue_uupdate_f(framebuffer_t* fb,
+                          const char* name, 
+                          int array_length,
+                          const float* src_float,
+                          glUniformFloatFunc float_func) {
 
-void fb_draw(framebuffer_t* fb) {
+    require(fb->num_uupdates < MAX_UNIFORM_UPDATES);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, fb->framebuffer);
-    glViewport(0, 0, fb->width, fb->height);
-    glUseProgram(fb->program);
+    uniform_update_t* uu = fb->uupdates + fb->num_uupdates;
 
+    ++fb->num_uupdates;
+
+    uu->type = GL_FLOAT;
+    uu->name = name;
+    uu->array_length = array_length;
+    uu->src_float = src_float;
+    uu->float_func = float_func;
+
+}
+
+void fb_run_uupdates(framebuffer_t* fb) {
+    
     for (size_t i=0; i<fb->num_uupdates; ++i) {
 
         const uniform_update_t* uu = fb->uupdates + i;
@@ -1324,6 +1331,18 @@ void fb_draw(framebuffer_t* fb) {
     memset(fb->uupdates, 0, sizeof(fb->uupdates));
     fb->num_uupdates = 0;
 
+}
+
+//////////////////////////////////////////////////////////////////////
+
+void fb_draw(framebuffer_t* fb) {
+
+    glBindFramebuffer(GL_FRAMEBUFFER, fb->framebuffer);
+    glViewport(0, 0, fb->width, fb->height);
+    glUseProgram(fb->program);
+
+    fb_run_uupdates(fb);
+    
     check_opengl_errors("use program and do uniform updates");
     
     const GLfloat zero[4] = { 0, 0, 0, 0 };
@@ -1655,6 +1674,11 @@ void setup_framebuffers(GLFWwindow* window) {
 
     fb_add_input(&gabor_eval_fb, "paramTexture", param_image32f.bound_texture);
 
+    float fdims[2] = { src_image32f.width, src_image32f.height };
+    
+    fb_enqueue_uupdate_f(&gabor_eval_fb, "srcDims", 1, fdims, glUniform2fv);
+
+    fb_run_uupdates(&gabor_eval_fb);
     
     ////////////////////////////////////////////////////////////
     
@@ -1714,26 +1738,18 @@ void setup_framebuffers(GLFWwindow* window) {
                      "inputTexture",
                      input_texture);
 
-        GLint input_dims = glGetUniformLocation(reduce_fbs[i].program,
-                                                "inputDims");
-
-        require( input_dims != -1 );
-
         int idims[2] = { prev_w, prev_h };
         int odims[2] = { w, h };
+        
+        fb_enqueue_uupdate_i(reduce_fbs + i,
+                             "inputDims", 1,
+                             idims, glUniform2iv);
 
-        glUniform2iv(input_dims, 1, idims);
+        fb_enqueue_uupdate_i(reduce_fbs + i,
+                             "outputDims", 1,
+                             odims, glUniform2iv);
 
-        printf("  set input_dims to %d, %d\n", idims[0], idims[1]);
-
-        GLint output_dims = glGetUniformLocation(reduce_fbs[i].program,
-                                                "outputDims");
-
-        require( output_dims != -1 );
-
-        glUniform2iv(output_dims, 1, odims);
-
-        printf("  set output_dims to %d, %d\n", odims[0], odims[1]);
+        fb_run_uupdates(reduce_fbs + i);
         
         input_texture = reduce_fbs[i].render_texture;
 
@@ -1754,6 +1770,12 @@ void setup_framebuffers(GLFWwindow* window) {
     fb_add_input(&main_fb, "approxTexture", gabor_eval_fb.render_texture);
     fb_add_input(&main_fb, "errorTexture", gabor_compare_fb.render_texture);
     fb_add_input(&main_fb, "palette", palette_image32f.bound_texture);
+
+    int sdims[2] = { src_image32f.width, src_image32f.height };
+
+    fb_enqueue_uupdate_i(&main_fb, "srcDims", 1, sdims, glUniform2iv);
+
+    fb_run_uupdates(&main_fb);
 
 }
 
