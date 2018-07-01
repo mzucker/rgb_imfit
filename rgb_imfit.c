@@ -1840,10 +1840,10 @@ void anneal_init() {
 
     anneal.prev_cost = -1;
 
-    anneal.t_max = 5e-5;
+    anneal.t_max = 5e-6;
     
-    const double max_iter = 1e7;
-    const double temp_decay = 1e-4;
+    const double max_iter = 1e9;
+    const double temp_decay = 1e-3;
     anneal.t_rate = -log(temp_decay) / max_iter;
 
     anneal.change_fraction = 0.0;

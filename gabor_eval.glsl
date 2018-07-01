@@ -28,7 +28,8 @@ void main() {
         float s = clamp(uvst.z, px, 2.0);
         float t = clamp(uvst.w, px, 4.0);
         float l = clamp(hl.w, 2.5*px, 4.0);
-        vec3 h = clamp(hl.xyz, 0.0, 2.0);
+        //vec3 h = clamp(hl.xyz, 0.0, 2.0);
+        float h = clamp(hl.x, 0.0, 2.0);
 
         float s2 = s*s;
         float t2 = t*t;
