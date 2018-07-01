@@ -168,6 +168,7 @@ typedef struct anneal_info {
     float prev_cost;
     double t_max;
     double t_rate;
+    double change_fraction;
     float p_reinitialize;
     float mutate_amount;
     image_t good_params32f;
@@ -1258,7 +1259,7 @@ void fb_screenshot(const framebuffer_t* fb) {
     if (fb->request_screenshot <= 0) {
         snprintf(filename, 1024, "%s.png", fb->name);
     } else {
-        snprintf(filename, 1024, "%s%04d.png", fb->name, fb->request_screenshot-1);
+        snprintf(filename, 1024, "%s%06d.png", fb->name, fb->request_screenshot-1);
     }
   
     write_png(filename, screen, w, h, stride, GL_TRUE, NULL);
@@ -1805,27 +1806,13 @@ void annealing_init() {
     anneal.iteration = 0;
     anneal.prev_cost = -1;
 
-    // p_init = exp(delta_init / T)
-    // log( p_init ) = delta_init / T
-    // T = delta_init / log(p_init)
+    anneal.t_max = 5e-5;
     
-    const double p_init = 0.01;
-    const double delta_init = -0.0001;
-    anneal.t_max = delta_init / log(p_init);
-    
-    // exp(-max_iter*t_rate) = temp_decrease
-    // -max_iter*t_rate = log(temp_decrease)
-    // t_rate = -log(temp_decrease)/max_iter
+    const double max_iter = 1e9; // 10 million
+    const double temp_decay = 1e-4;
+    anneal.t_rate = -log(temp_decay) / max_iter;
 
-    const double max_iter = 1e7; // 10 million
-    const double temp_decrease = 1e-4;
-    anneal.t_rate = -log(temp_decrease) / max_iter;
-
-    printf("p_init = %g, exp(delta_init / T) = %g\n",
-           p_init, exp(delta_init / anneal.t_max));
-
-    printf("t_max = %g\n", anneal.t_max);
-
+    anneal.change_fraction = 1.0/32.0;
     anneal.p_reinitialize = 0.01;
     anneal.mutate_amount = 0.01;
 
@@ -1841,18 +1828,25 @@ void annealing_move() {
 
     require(num_tiles == 1);
 
-    // tweak exactly one gabor function
-    int midx = pcg32_random_r(&rng_global) % gabors_per_tile;
-    int i = midx * GABOR_NUM_PARAMS;
+    // tweak multiple gabor functions
+    size_t nchange = floor(anneal.change_fraction * gabors_per_tile);
+    if (nchange < 1) { nchange = 1; }
 
-    float* pi = param_image32f.data_32f + i;
-    
-    float r = random_float();
+    for (size_t c=0; c<nchange; ++c) {
+        
+        int midx = pcg32_random_r(&rng_global) % gabors_per_tile;
+        int i = midx * GABOR_NUM_PARAMS;
+        
+        float* pi = param_image32f.data_32f + i;
+        
+        float r = random_float();
+        
+        if (r < anneal.p_reinitialize) {
+            init_params(pi);
+        } else {
+            mutate_params(pi, anneal.mutate_amount);
+        }
 
-    if (r < anneal.p_reinitialize) {
-        init_params(pi);
-    } else {
-        mutate_params(pi, anneal.mutate_amount);
     }
     
 }
