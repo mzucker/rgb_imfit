@@ -392,6 +392,7 @@ void image_destroy(image_t* image) {
 void image_copy(image_t* dst, const image_t* src) {
 
     image_create(dst, src->width, src->height, src->channels, src->type);
+    dst->bound_texture = src->bound_texture;
 
     require(dst->buf.size == src->buf.size);
 
@@ -1780,13 +1781,10 @@ void setup_framebuffers(GLFWwindow* window) {
 
 }
 
-void compute() {
+void compute(image_t* texture) {
 
-    // don't forget inequalities:
-    //  s >= l/32, s < l/2
-    //  t > s,     t < 8s (basically a pyramid in 3D)
-
-    upload_texture(&param_image32f);
+    require(texture->bound_texture != 0);
+    upload_texture(texture);
 
     fb_draw(&gabor_eval_fb);
     fb_draw(&gabor_compare_fb);
@@ -1820,13 +1818,53 @@ void annealing_init() {
 
 }
 
-void annealing_move() {
+
+void annealing_update() {
+
+    require(num_tiles == 1);
     
-    if (anneal.iteration == 0) {
+    float num = reduced_image32f.data_32f[0];
+    float denom = reduced_image32f.data_32f[3];
+    float cur_cost = num / denom;
+
+    int first = (anneal.iteration == 0);
+    ++anneal.iteration;
+
+    if (first) {
+        anneal.prev_cost = cur_cost;
         return;
     }
 
-    require(num_tiles == 1);
+    int keep = 0;
+
+    double delta_cost = anneal.prev_cost - cur_cost;
+
+    if (delta_cost > 0) {
+        keep = 1;
+    } else {
+        double temperature = anneal.t_max * exp(-anneal.t_rate * anneal.iteration);
+        float p_keep = exp(delta_cost / temperature);
+        if (random_float() < p_keep) {
+            keep = 1;
+        }
+    }
+
+    if (keep) {
+        
+        anneal.prev_cost = cur_cost;
+
+        memcpy(anneal.good_params32f.buf.data,
+               (const char*)param_image32f.buf.data,
+               param_image32f.buf.size);
+        
+    } else {
+        
+        memcpy(param_image32f.buf.data,
+               (const char*)anneal.good_params32f.buf.data,
+               param_image32f.buf.size);
+        
+    }
+
 
     // tweak multiple gabor functions
     size_t nchange = floor(anneal.change_fraction * gabors_per_tile);
@@ -1851,63 +1889,6 @@ void annealing_move() {
     
 }
 
-void annealing_verify() {
-
-    float num = reduced_image32f.data_32f[0];
-    float denom = reduced_image32f.data_32f[3];
-    float cur_cost = num / denom;
-
-    //printf("num = %g, denom = %g\n", num, denom);
-    //printf("cur_cost at iteration %d = %g (%g prev)\n",
-    //anneal.iteration, cur_cost, anneal.prev_cost);
-    
-    int first = (anneal.iteration == 0);
-    ++anneal.iteration;
-
-    if (first) {
-        anneal.prev_cost = cur_cost;
-        return;
-    }
-
-    int keep = 0;
-
-    double delta_cost = anneal.prev_cost - cur_cost;
-
-    if (delta_cost > 0) {
-        //printf("improved, keeping it!\n");
-        keep = 1;
-    } else {
-        double temperature = anneal.t_max * exp(-anneal.t_rate * anneal.iteration);
-        float p_keep = exp(delta_cost / temperature);
-        //printf("for delta_cost=%g, p_keep=%g with temp=%g\n",
-        //delta_cost, p_keep, temperature);
-        if (random_float() < p_keep) {
-            //printf("accepted!\n");
-            keep = 1;
-        }
-    }
-
-    if (keep) {
-        
-        //printf("updating cost!\n");
-        anneal.prev_cost = cur_cost;
-
-        memcpy(anneal.good_params32f.buf.data,
-               (const char*)param_image32f.buf.data,
-               param_image32f.buf.size);
-        
-    } else {
-        
-        //printf("reverting texture!\n");
-
-        memcpy(param_image32f.buf.data,
-               (const char*)anneal.good_params32f.buf.data,
-               param_image32f.buf.size);
-    }
-
-    
-}
-
 void anneal_info(double elapsed, int num_iter) {
 
     double temperature = anneal.t_max * exp(-anneal.t_rate * anneal.iteration);
@@ -1917,6 +1898,9 @@ void anneal_info(double elapsed, int num_iter) {
            num_iter, elapsed, 1000*elapsed/num_iter,
            anneal.iteration, anneal.prev_cost, temperature);
 
+    compute(&anneal.good_params32f);
+    
+    
 }
 
 void solve(GLFWwindow* window) {
@@ -1942,13 +1926,7 @@ void solve(GLFWwindow* window) {
  
             double elapsed = glfwGetTime() - start;
             anneal_info(elapsed, iter_since_printout);
-           
-            memcpy(param_image32f.buf.data,
-                   (const char*)anneal.good_params32f.buf.data,
-                   param_image32f.buf.size);
-        
-            compute();
-
+                   
             if (do_vis) {
                 draw_main(window);
                 glfwSwapBuffers(window);
@@ -1965,12 +1943,9 @@ void solve(GLFWwindow* window) {
             iter_since_printout = 0;
 
         }
-
-        annealing_move();
         
-        compute();
-        
-        annealing_verify();
+        compute(&param_image32f);
+        annealing_update();
 
         ++iter_since_printout;
         
