@@ -5,6 +5,7 @@ uniform sampler2D errorTexture;
 
 uniform sampler2D palette;
 
+uniform ivec2 numTiles;
 uniform ivec2 srcDims;
 uniform ivec2 outputDims;
 
@@ -12,9 +13,7 @@ void main() {
 
     ivec2 p = ivec2(gl_FragCoord.xy);
 
-    const ivec2 tiles = ivec2(2, 1);
-    
-    ivec2 tiledSrcDims = srcDims*tiles;
+    ivec2 tiledSrcDims = srcDims*numTiles;
 
     ivec2 r = outputDims / tiledSrcDims;
     int repeat = max(min(r.x, r.y), 1);

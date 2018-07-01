@@ -110,7 +110,12 @@ typedef struct framebuffer {
     int request_screenshot;
 
 } framebuffer_t;
-    
+
+typedef struct { uint64_t state;  uint64_t inc; } pcg32_random_t;
+
+#define PCG32_INITIALIZER   { 0x853c49e6748fea9bULL, 0xda3e39cb94b95bdbULL }
+
+pcg32_random_t rng_global = PCG32_INITIALIZER;
 
 //////////////////////////////////////////////////////////////////////
 // GLOBALS
@@ -235,7 +240,6 @@ float param_bounds[GABOR_NUM_PARAMS][2] = {
 
 //////////////////////////////////////////////////////////////////////
 
-
 #define require(x) do { if (!(x)) { _require_fail(__FILE__, __LINE__, #x); } } while (0)
 
 void _require_fail(const char* file, int line, const char* what) {
@@ -246,6 +250,78 @@ void _require_fail(const char* file, int line, const char* what) {
     exit(1);
     
 }
+
+//////////////////////////////////////////////////////////////////////
+
+uint32_t pcg32_random_r(pcg32_random_t* rng) {
+    uint64_t oldstate = rng->state;
+    // Advance internal state
+    rng->state = oldstate * 6364136223846793005ULL + (rng->inc|1);
+    // Calculate output function (XSH RR), uses old state for max ILP
+    uint32_t xorshifted = ((oldstate >> 18u) ^ oldstate) >> 27u;
+    uint32_t rot = oldstate >> 59u;
+    return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+}
+
+uint32_t pcg32_random() {
+    return pcg32_random_r(&rng_global);
+}
+
+void pcg32_srandom_r(pcg32_random_t* rng,
+                     uint64_t initstate,
+                     uint64_t initseq) {
+
+    rng->state = 0U;
+    rng->inc = (initseq << 1u) | 1u;
+    pcg32_random_r(rng);
+    rng->state += initstate;
+    pcg32_random_r(rng);
+    
+}
+
+//////////////////////////////////////////////////////////////////////
+
+float random_float() {
+    return (float)pcg32_random() / (float)UINT32_MAX;
+}
+
+void random_float_sign(float* x, float* s) {
+    uint32_t r = pcg32_random();
+    *s = (r & 1) ? -1 : 1;
+    *x = (float)(r >> 1) / (float)(UINT32_MAX >> 1);
+}
+
+float lerp(float a, float b, float u) {
+    return a + u*(b-a);
+}
+
+float signed_random() {
+    return random_float()*2-1;
+}
+
+float signed_random2() {
+    float x, s;
+    random_float_sign(&x, &s);
+    return x*x*s;
+}
+
+float signed_random3() {
+    float x, s;
+    random_float_sign(&x, &s);
+    return x*x*x*s;
+}
+
+//////////////////////////////////////////////////////////////////////
+
+float clamp(float x, float minval, float maxval) {
+    return x < minval ? minval : x > maxval ? maxval : x;
+}
+
+float wrap2pi(float x) {
+    return fmod(x, 2*M_PI);
+}
+
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 //////////////////////////////////////////////////////////////////////
 
@@ -383,12 +459,16 @@ void image_create(image_t* image,
                
 }
 
+//////////////////////////////////////////////////////////////////////
+
 void image_destroy(image_t* image) {
     
     buf_free(&(image->buf));
     memset(image, 0, sizeof(image_t));
     
 }
+
+//////////////////////////////////////////////////////////////////////
 
 void image_copy(image_t* dst, const image_t* src) {
 
@@ -401,6 +481,7 @@ void image_copy(image_t* dst, const image_t* src) {
 
 }
 
+//////////////////////////////////////////////////////////////////////
 
 void image8u_to_32f(const image_t* src,
                     image_t* dst) {
@@ -414,6 +495,8 @@ void image8u_to_32f(const image_t* src,
     }
 
 }
+
+//////////////////////////////////////////////////////////////////////
 
 void image32f_to_8u(const image_t* src,
                     image_t* dst) {
@@ -508,8 +591,10 @@ int write_png(const char* filename,
     png_destroy_write_struct(&png_ptr, &info_ptr);
     fclose(fp);
 
+    /*
     fprintf(stderr, "wrote %s with size %dx%d\n", filename,
             (int)ncols, (int)nrows);
+    */
 
     return 1;
 
@@ -782,6 +867,8 @@ void load_image(image_t* dst, const char* filename, int vflip) {
     
 }
 
+//////////////////////////////////////////////////////////////////////
+
 void load_image_32f(image_t* dst, const char* filename, int vflip) {
 
     image_t tmp;
@@ -900,6 +987,8 @@ GLenum gl_datatype(image_type_t type) {
     }
 }
 
+//////////////////////////////////////////////////////////////////////
+
 GLenum gl_format(size_t channels) {
     require( channels == 1 || channels == 3 || channels == 4 );
     if (channels == 1) {
@@ -910,6 +999,8 @@ GLenum gl_format(size_t channels) {
         return GL_RGBA;
     }
 }
+
+//////////////////////////////////////////////////////////////////////
 
 GLenum gl_internal_format(GLenum format, GLenum datatype) {
 
@@ -928,7 +1019,6 @@ GLenum gl_internal_format(GLenum format, GLenum datatype) {
 
 //////////////////////////////////////////////////////////////////////
 
-// should already be bound!
 void upload_texture(const image_t* image) {
 
     GLenum format = gl_format(image->channels);
@@ -945,6 +1035,8 @@ void upload_texture(const image_t* image) {
 
 
 }
+
+//////////////////////////////////////////////////////////////////////
 
 GLuint make_texture(image_t* image) {
 
@@ -1029,7 +1121,6 @@ GLFWwindow* setup_window() {
         w *= k;
         h *= k;
     }
-    
 
     printf("creating window of size %d %d\n", w, h);
 
@@ -1079,6 +1170,8 @@ GLuint make_shader(GLenum type,
     return shader;
   
 }
+
+//////////////////////////////////////////////////////////////////////
 
 GLuint make_shader_file(GLenum type,
                         const char* filename,
@@ -1293,6 +1386,8 @@ void fb_enqueue_uupdate_i(framebuffer_t* fb,
 
 }
 
+//////////////////////////////////////////////////////////////////////
+
 void fb_enqueue_uupdate_f(framebuffer_t* fb,
                           const char* name, 
                           int array_length,
@@ -1312,6 +1407,8 @@ void fb_enqueue_uupdate_f(framebuffer_t* fb,
     uu->float_func = float_func;
 
 }
+
+//////////////////////////////////////////////////////////////////////
 
 void fb_run_uupdates(framebuffer_t* fb) {
     
@@ -1373,13 +1470,13 @@ void fb_draw(framebuffer_t* fb) {
     check_opengl_errors("draw framebuffer");
 
     if (fb->request_screenshot) {
-        printf("************************************************************\n");
         fb_screenshot(fb);
         fb->request_screenshot = 0;
-        printf("************************************************************\n");
     }
     
 }
+
+//////////////////////////////////////////////////////////////////////
 
 void draw_main(GLFWwindow* window) {
 
@@ -1418,50 +1515,6 @@ void draw_main(GLFWwindow* window) {
 }
 
 //////////////////////////////////////////////////////////////////////
-
-typedef struct { uint64_t state;  uint64_t inc; } pcg32_random_t;
-
-#define PCG32_INITIALIZER   { 0x853c49e6748fea9bULL, 0xda3e39cb94b95bdbULL }
-
-pcg32_random_t rng_global = PCG32_INITIALIZER;
-
-uint32_t pcg32_random_r(pcg32_random_t* rng) {
-    uint64_t oldstate = rng->state;
-    // Advance internal state
-    rng->state = oldstate * 6364136223846793005ULL + (rng->inc|1);
-    // Calculate output function (XSH RR), uses old state for max ILP
-    uint32_t xorshifted = ((oldstate >> 18u) ^ oldstate) >> 27u;
-    uint32_t rot = oldstate >> 59u;
-    return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
-}
-
-void pcg32_srandom_r(pcg32_random_t* rng,
-                     uint64_t initstate,
-                     uint64_t initseq) {
-
-    rng->state = 0U;
-    rng->inc = (initseq << 1u) | 1u;
-    pcg32_random_r(rng);
-    rng->state += initstate;
-    pcg32_random_r(rng);
-    
-}
-
-float random_float() {
-    return (float)pcg32_random_r(&rng_global) / (float)UINT32_MAX;
-}
-
-void random_float_sign(float* x, float* s) {
-    uint32_t r = pcg32_random_r(&rng_global);
-    *s = (r & 1) ? -1 : 1;
-    *x = (float)(r >> 1) / (float)(UINT32_MAX >> 1);
-}
-
-float lerp(float a, float b, float u) {
-    return a + u*(b-a);
-}
-
-#define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 void init_params(float pi[GABOR_NUM_PARAMS]) {
 
@@ -1503,29 +1556,8 @@ void init_params(float pi[GABOR_NUM_PARAMS]) {
 
 }
 
-float signed_random() {
-    return random_float()*2-1;
-}
 
-float signed_random2() {
-    float x, s;
-    random_float_sign(&x, &s);
-    return x*x*s;
-}
-
-float signed_random3() {
-    float x, s;
-    random_float_sign(&x, &s);
-    return x*x*x*s;
-}
-
-float clamp(float x, float minval, float maxval) {
-    return x < minval ? minval : x > maxval ? maxval : x;
-}
-
-float wrap2pi(float x) {
-    return fmod(x, 2*M_PI);
-}
+//////////////////////////////////////////////////////////////////////
 
 void mutate_params(float pi[GABOR_NUM_PARAMS], float amount) {
 
@@ -1554,6 +1586,8 @@ void mutate_params(float pi[GABOR_NUM_PARAMS], float amount) {
     }
     
 }
+
+//////////////////////////////////////////////////////////////////////
 
 const float* magma_data();
 
@@ -1594,16 +1628,6 @@ GLuint setup_textures() {
         for (int midx=0; midx<gabors_per_tile; ++midx) {
             int i = pidx * gabors_per_tile + midx;
             float* pi = param_image32f.data_32f + i*GABOR_NUM_PARAMS;
-            /*
-            if (pidx == 0) {
-                init_params(pi);
-            } else {
-                const float* pi0 = param_image32f.data_32f + midx*GABOR_NUM_PARAMS;
-                require(pi0 < pi);
-                memcpy(pi, pi0, sizeof(float)*GABOR_NUM_PARAMS);
-                mutate_params(pi, 0.05);
-            }
-            */
             init_params(pi);
         }
     }
@@ -1656,6 +1680,8 @@ void setup_vertex_stuff() {
     check_opengl_errors("after vao setup");
 
 }
+
+//////////////////////////////////////////////////////////////////////
 
 void setup_framebuffers(GLFWwindow* window) {
 
@@ -1776,17 +1802,21 @@ void setup_framebuffers(GLFWwindow* window) {
     fb_add_input(&main_fb, "palette", palette_image32f.bound_texture);
 
     int sdims[2] = { src_image32f.width, src_image32f.height };
+    int ntiles[2] = { VIS_TILES, num_tiles };
 
     fb_enqueue_uupdate_i(&main_fb, "srcDims", 1, sdims, glUniform2iv);
+
+    fb_enqueue_uupdate_i(&main_fb, "numTiles", 1, ntiles, glUniform2iv);
 
     fb_run_uupdates(&main_fb);
 
 }
 
-void compute(image_t* texture) {
+//////////////////////////////////////////////////////////////////////
 
-    require(texture->bound_texture != 0);
-    upload_texture(texture);
+void compute() {
+
+    upload_texture(&param_image32f);
 
     fb_draw(&gabor_eval_fb);
     fb_draw(&gabor_compare_fb);
@@ -1805,17 +1835,17 @@ void compute(image_t* texture) {
 
 }
 
-void annealing_init() {
+//////////////////////////////////////////////////////////////////////
 
-    require(num_tiles == 1);
+void anneal_init() {
 
     anneal.iteration = 0;
     anneal.prev_cost = -1;
 
     anneal.t_max = 5e-5;
     
-    const double max_iter = 1e9; // 10 million
-    const double temp_decay = 1e-4;
+    const double max_iter = 1e7;
+    const double temp_decay = 1e-3;
     anneal.t_rate = -log(temp_decay) / max_iter;
 
     anneal.change_fraction = 1.0/32.0;
@@ -1826,11 +1856,10 @@ void annealing_init() {
 
 }
 
+//////////////////////////////////////////////////////////////////////
 
-void annealing_update() {
+void anneal_update() {
 
-    require(num_tiles == 1);
-    
     float cur_cost = objective_values[0];
 
     int first = (anneal.iteration == 0);
@@ -1876,24 +1905,30 @@ void annealing_update() {
     size_t nchange = floor(anneal.change_fraction * gabors_per_tile);
     if (nchange < 1) { nchange = 1; }
 
-    for (size_t c=0; c<nchange; ++c) {
+    require( num_tiles == 1 );
+
+    for (size_t pidx=0; pidx<num_tiles; ++pidx) {
+        for (size_t c=0; c<nchange; ++c) {
         
-        int midx = pcg32_random_r(&rng_global) % gabors_per_tile;
-        int i = midx * GABOR_NUM_PARAMS;
+            int midx = pcg32_random_r(&rng_global) % gabors_per_tile;
+            int i = midx + pidx * gabors_per_tile;
         
-        float* pi = param_image32f.data_32f + i;
+            float* pi = param_image32f.data_32f + i*GABOR_NUM_PARAMS;
         
-        float r = random_float();
+            float r = random_float();
         
-        if (r < anneal.p_reinitialize) {
-            init_params(pi);
-        } else {
-            mutate_params(pi, anneal.mutate_amount);
+            if (r < anneal.p_reinitialize) {
+                init_params(pi);
+            } else {
+                mutate_params(pi, anneal.mutate_amount);
+            }
+
         }
 
     }
-    
 }
+
+//////////////////////////////////////////////////////////////////////
 
 void anneal_info(double elapsed, int num_iter) {
 
@@ -1902,17 +1937,17 @@ void anneal_info(double elapsed, int num_iter) {
     printf("ran %d iterations in %g seconds (%g ms/iter); "
            "at iteration %d, cost is %g and temperature is %g\n",
            num_iter, elapsed, 1000*elapsed/num_iter,
-           anneal.iteration, anneal.prev_cost, temperature);
+           anneal.iteration, objective_values[0], temperature);
 
-    compute(&anneal.good_params32f);
-    
     
 }
+
+//////////////////////////////////////////////////////////////////////
 
 void solve(GLFWwindow* window) {
 
     require(solver == SOLVER_ANNEALING);
-    annealing_init();
+    anneal_init();
 
     double start = glfwGetTime();
     size_t iter_since_printout = 0;
@@ -1923,6 +1958,8 @@ void solve(GLFWwindow* window) {
     int num_screenshots = 0;
 
     while (1) {
+
+        compute();
         
         size_t iteration = anneal.iteration;
         int do_vis = iter_per_vis && (iteration % iter_per_vis == 0);
@@ -1950,8 +1987,7 @@ void solve(GLFWwindow* window) {
 
         }
         
-        compute(&param_image32f);
-        annealing_update();
+        anneal_update();
 
         ++iter_since_printout;
         
@@ -1959,32 +1995,6 @@ void solve(GLFWwindow* window) {
 
 }
     
-//////////////////////////////////////////////////////////////////////
-
-int main(int argc, char** argv) {
-
-
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-
-    pcg32_srandom_r(&rng_global, tv.tv_sec, tv.tv_usec);
-
-    get_options(argc, argv);    
-
-    GLFWwindow* window = setup_window();
-
-
-    setup_textures();
-             
-    setup_vertex_stuff();
-
-    setup_framebuffers(window);
-
-    solve(window);
-
-    
-}
-
 //////////////////////////////////////////////////////////////////////
 
 const float* magma_data() {
@@ -2252,3 +2262,30 @@ const float* magma_data() {
     return data;
 
 }
+
+//////////////////////////////////////////////////////////////////////
+
+int main(int argc, char** argv) {
+
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    pcg32_srandom_r(&rng_global, tv.tv_sec, tv.tv_usec);
+
+    get_options(argc, argv);    
+
+    GLFWwindow* window = setup_window();
+
+
+    setup_textures();
+             
+    setup_vertex_stuff();
+
+    setup_framebuffers(window);
+
+    solve(window);
+
+    
+}
+
