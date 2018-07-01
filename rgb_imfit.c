@@ -162,6 +162,7 @@ char* reduce_names = 0;
 framebuffer_t main_fb;
 
 image_t reduced_image32f;
+float* objective_values;
 
 typedef struct anneal_info {
     int iteration;
@@ -1760,6 +1761,7 @@ void setup_framebuffers(GLFWwindow* window) {
     image_create(&reduced_image32f, 1, num_tiles, 4, IMAGE_32F);
     printf("reduced_image32f has size %d\n", (int)reduced_image32f.buf.size);
 
+    objective_values = malloc(num_tiles*sizeof(float));
 
     fb_setup(&main_fb,
              "main",
@@ -1795,6 +1797,12 @@ void compute(image_t* texture) {
     
     read_pixels(&reduced_image32f);
 
+    for (size_t i=0; i<num_tiles; ++i) {
+        float num = reduced_image32f.data_32f[4*i + 0];
+        float denom = reduced_image32f.data_32f[4*i + 3];
+        objective_values[i] = num / denom;
+    }
+
 }
 
 void annealing_init() {
@@ -1823,9 +1831,7 @@ void annealing_update() {
 
     require(num_tiles == 1);
     
-    float num = reduced_image32f.data_32f[0];
-    float denom = reduced_image32f.data_32f[3];
-    float cur_cost = num / denom;
+    float cur_cost = objective_values[0];
 
     int first = (anneal.iteration == 0);
     ++anneal.iteration;
