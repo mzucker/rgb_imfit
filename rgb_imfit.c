@@ -1533,7 +1533,7 @@ void init_params(float pi[GABOR_NUM_PARAMS]) {
     for (int k=0; k<3; ++k) {
         float h = pi[GABOR_PARAM_H0+k];
         h = h * h * h;
-        h *= h1 * 4. / sqrt(gabors_per_tile);
+        h *= h1;
         pi[GABOR_PARAM_H0+k] = h;
     }
 
@@ -1842,7 +1842,7 @@ void anneal_init() {
 
     anneal.t_max = 5e-5;
     
-    const double max_iter = 1e8;
+    const double max_iter = 1e7;
     const double temp_decay = 1e-4;
     anneal.t_rate = -log(temp_decay) / max_iter;
 
