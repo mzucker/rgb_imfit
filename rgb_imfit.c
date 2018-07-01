@@ -63,7 +63,30 @@ typedef struct image {
 
 enum {
     MAX_INPUTS = 4,
+    MAX_UNIFORM_UPDATES = 4,
 };
+
+typedef void (*glUniformFloatFunc)(GLint, GLsizei, const GLfloat*);
+typedef void (*glUniformIntFunc)(GLint, GLsizei, const GLint*);
+
+typedef struct uniform_update {
+    
+    GLenum type; // GL_NONE, GL_INT, GL_FLOAT
+    
+    const char* name;
+    int array_length;
+    
+    union {
+        const float* src_float;
+        const int*   src_int;
+    };
+    
+    union {
+        glUniformIntFunc   int_func;
+        glUniformFloatFunc float_func;
+    };
+    
+} uniform_update_t;
 
 typedef struct framebuffer {
 
@@ -79,6 +102,9 @@ typedef struct framebuffer {
     GLenum inputs[MAX_INPUTS];
 
     GLuint program;
+
+    size_t num_uupdates;
+    uniform_update_t uupdates[MAX_UNIFORM_UPDATES];
 
     int request_screenshot;
 
@@ -1245,12 +1271,55 @@ void fb_screenshot(const framebuffer_t* fb) {
 
 //////////////////////////////////////////////////////////////////////
 
+void fb_enqueue_uupdate_i(framebuffer_t* fb,
+                          const char* name, 
+                          int array_length,
+                          const int* src_int,
+                          glUniformIntFunc int_func) {
+
+    require(fb->num_uupdates < MAX_UNIFORM_UPDATES);
+
+    uniform_update_t* uu = fb->uupdates + fb->num_uupdates;
+
+    ++fb->num_uupdates;
+
+    uu->type = GL_INT;
+    uu->name = name;
+    uu->array_length = array_length;
+    uu->src_int = src_int;
+    uu->int_func = int_func;
+
+}
+
+//////////////////////////////////////////////////////////////////////
+
 void fb_draw(framebuffer_t* fb) {
 
     glBindFramebuffer(GL_FRAMEBUFFER, fb->framebuffer);
     glViewport(0, 0, fb->width, fb->height);
     glUseProgram(fb->program);
 
+    for (size_t i=0; i<fb->num_uupdates; ++i) {
+
+        const uniform_update_t* uu = fb->uupdates + i;
+        require(uu->type == GL_INT || uu->type == GL_FLOAT);
+
+        int location = glGetUniformLocation(fb->program, uu->name);
+        if (location == -1) { continue; }
+        
+        if (uu->type == GL_INT) {
+            uu->int_func(location, uu->array_length, uu->src_int);
+        } else {
+            uu->float_func(location, uu->array_length, uu->src_float);
+        }
+        
+    }
+    
+    memset(fb->uupdates, 0, sizeof(fb->uupdates));
+    fb->num_uupdates = 0;
+
+    check_opengl_errors("use program and do uniform updates");
+    
     const GLfloat zero[4] = { 0, 0, 0, 0 };
     glClearBufferfv(GL_COLOR, 0, zero);
     
@@ -1284,6 +1353,41 @@ void fb_draw(framebuffer_t* fb) {
     
 }
 
+void draw_main(GLFWwindow* window) {
+
+    GLuint old_framebuffer = main_fb.framebuffer;
+    
+    size_t old_width = main_fb.width;
+    size_t old_height = main_fb.height;
+
+    if (window) {
+
+        GLint w, h;
+        glfwGetFramebufferSize(window, &w, &h);
+        
+        main_fb.framebuffer = 0;
+        main_fb.width = w;
+        main_fb.height = h;
+
+    }
+
+    GLint odims[2] = { main_fb.width, main_fb.height };
+
+    fb_enqueue_uupdate_i(&main_fb, "outputDims", 1, odims,
+                         glUniform2iv);
+    
+    fb_draw(&main_fb);
+
+    if (window) {
+        
+        main_fb.framebuffer = old_framebuffer;
+        main_fb.width = old_width;
+        main_fb.height = old_height;
+
+    }
+
+    
+}
 
 //////////////////////////////////////////////////////////////////////
 
@@ -1810,14 +1914,8 @@ void solve(GLFWwindow* window) {
         
         compute();
 
-        int w, h;
-        glfwGetFramebufferSize(window, &w, &h);
-
-        main_fb.width = w;
-        main_fb.height = h;
-
-        fb_draw(&main_fb);
-
+        draw_main(window);
+        
         glfwSwapBuffers(window);
         glfwPollEvents();
 
