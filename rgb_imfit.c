@@ -170,7 +170,6 @@ image_t reduced_image32f;
 float* objective_values;
 
 typedef struct anneal_info {
-    int iteration;
     float prev_cost;
     double t_max;
     double t_rate;
@@ -1839,16 +1838,15 @@ void compute() {
 
 void anneal_init() {
 
-    anneal.iteration = 0;
     anneal.prev_cost = -1;
 
     anneal.t_max = 5e-5;
     
-    const double max_iter = 1e7;
-    const double temp_decay = 1e-3;
+    const double max_iter = 1e8;
+    const double temp_decay = 1e-4;
     anneal.t_rate = -log(temp_decay) / max_iter;
 
-    anneal.change_fraction = 1.0/32.0;
+    anneal.change_fraction = 0.0;
     anneal.p_reinitialize = 0.01;
     anneal.mutate_amount = 0.01;
 
@@ -1858,12 +1856,12 @@ void anneal_init() {
 
 //////////////////////////////////////////////////////////////////////
 
-void anneal_update() {
+void anneal_update(size_t iteration) {
 
     float cur_cost = objective_values[0];
 
-    int first = (anneal.iteration == 0);
-    ++anneal.iteration;
+    int first = (iteration == 0);
+
 
     if (first) {
         anneal.prev_cost = cur_cost;
@@ -1877,7 +1875,7 @@ void anneal_update() {
     if (delta_cost > 0) {
         keep = 1;
     } else {
-        double temperature = anneal.t_max * exp(-anneal.t_rate * anneal.iteration);
+        double temperature = anneal.t_max * exp(-anneal.t_rate * iteration);
         float p_keep = exp(delta_cost / temperature);
         if (random_float() < p_keep) {
             keep = 1;
@@ -1902,14 +1900,15 @@ void anneal_update() {
 
 
     // tweak multiple gabor functions
-    size_t nchange = floor(anneal.change_fraction * gabors_per_tile);
+    size_t nchange = floor(anneal.change_fraction * gabors_per_tile + 0.5);
     if (nchange < 1) { nchange = 1; }
+        
 
     require( num_tiles == 1 );
 
     for (size_t pidx=0; pidx<num_tiles; ++pidx) {
         for (size_t c=0; c<nchange; ++c) {
-        
+
             int midx = pcg32_random_r(&rng_global) % gabors_per_tile;
             int i = midx + pidx * gabors_per_tile;
         
@@ -1930,14 +1929,16 @@ void anneal_update() {
 
 //////////////////////////////////////////////////////////////////////
 
-void anneal_info(double elapsed, int num_iter) {
+void anneal_info(size_t iteration,
+                 double elapsed,
+                 size_t num_iter) {
 
-    double temperature = anneal.t_max * exp(-anneal.t_rate * anneal.iteration);
+    double temperature = anneal.t_max * exp(-anneal.t_rate * iteration);
     
-    printf("ran %d iterations in %g seconds (%g ms/iter); "
-           "at iteration %d, cost is %g and temperature is %g\n",
+    printf("ran %zu iterations in %g seconds (%g ms/iter); "
+           "at iteration %zu, cost is %g and temperature is %g\n",
            num_iter, elapsed, 1000*elapsed/num_iter,
-           anneal.iteration, objective_values[0], temperature);
+           iteration, objective_values[0], temperature);
 
     
 }
@@ -1950,10 +1951,13 @@ void solve(GLFWwindow* window) {
     anneal_init();
 
     double start = glfwGetTime();
+    
+    size_t iteration = 0;
     size_t iter_since_printout = 0;
 
     const size_t iter_per_vis = 1000;
     const size_t iter_per_screenshot = 1000;
+
 
     int num_screenshots = 0;
 
@@ -1961,14 +1965,13 @@ void solve(GLFWwindow* window) {
 
         compute();
         
-        size_t iteration = anneal.iteration;
         int do_vis = iter_per_vis && (iteration % iter_per_vis == 0);
         int do_screenshot = iter_per_screenshot && (iteration % iter_per_screenshot == 0);
 
         if (do_vis || do_screenshot) {
  
             double elapsed = glfwGetTime() - start;
-            anneal_info(elapsed, iter_since_printout);
+            anneal_info(iteration, elapsed, iter_since_printout);
                    
             if (do_vis) {
                 draw_main(window);
@@ -1987,8 +1990,9 @@ void solve(GLFWwindow* window) {
 
         }
         
-        anneal_update();
+        anneal_update(iteration);
 
+        ++iteration;
         ++iter_since_printout;
         
     }
