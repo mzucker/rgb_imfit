@@ -15,7 +15,7 @@
 
  - add weight texture
  - resize input using mipmapping
- - figure out how to optimize error
+ - nice palette (magma?) for output
 
  */
 
@@ -99,7 +99,7 @@ typedef enum solver_type {
 
 buffer_t vertex_src = { 0, 0, 0 };
 
-size_t gabors_per_tile = 256;
+size_t gabors_per_tile = 128;
 
 #ifdef __APPLE__
 size_t num_tiles = 100;
@@ -139,7 +139,7 @@ typedef struct anneal_info {
     float prev_cost;
     double t_max;
     double t_rate;
-    float p_init;
+    float p_reinitialize;
     float mutate_amount;
     image_t good_params32f;
 } anneal_info_t;
@@ -1342,7 +1342,7 @@ void mutate_params(float pi[GABOR_NUM_PARAMS], float amount) {
     for (int j=0; j<GABOR_NUM_PARAMS; ++j) {
         
         const float* lohi = mybounds[j];
-        pi[j] += amount * (lohi[1]-lohi[0]) * signed_random();
+        pi[j] += amount * (lohi[1]-lohi[0]) * signed_random3();
 
         if (j < GABOR_PARAM_PHI0 || j > GABOR_PARAM_R) {
             pi[j] = clamp(pi[j], lohi[0], lohi[1]);
@@ -1370,7 +1370,7 @@ GLuint setup_param_texture() {
     float hwmax = MAX(src_image32f.width, src_image32f.height);
     px = 2.0 / hwmax;
 
-    param_bounds[GABOR_PARAM_S][0] = px;
+    param_bounds[GABOR_PARAM_S][0] = 0.5*px;
     
     image_create(&param_image32f, gabors_per_tile*3, num_tiles, 4, IMAGE_32F);
 
@@ -1586,21 +1586,20 @@ void annealing_init() {
     anneal.iteration = 0;
     anneal.prev_cost = -1;
 
-    const double p_init = 0.5;
-    const double delta_init = -0.0001;
-
     // p_init = exp(delta_init / T)
     // log( p_init ) = delta_init / T
     // T = delta_init / log(p_init)
-
-    const double max_iter = 1e7; // 10 million
-    const double temp_decrease = 1e-4;
-
+    
+    const double p_init = 0.01;
+    const double delta_init = -0.0001;
+    anneal.t_max = delta_init / log(p_init);
+    
     // exp(-max_iter*t_rate) = temp_decrease
     // -max_iter*t_rate = log(temp_decrease)
     // t_rate = -log(temp_decrease)/max_iter
-    
-    anneal.t_max = delta_init / log(p_init);
+
+    const double max_iter = 1e7; // 10 million
+    const double temp_decrease = 1e-4;
     anneal.t_rate = -log(temp_decrease) / max_iter;
 
     printf("p_init = %g, exp(delta_init / T) = %g\n",
@@ -1608,7 +1607,7 @@ void annealing_init() {
 
     printf("t_max = %g\n", anneal.t_max);
 
-    anneal.p_init = 0.01;
+    anneal.p_reinitialize = 0.01;
     anneal.mutate_amount = 0.01;
 
     image_copy(&anneal.good_params32f, &param_image32f);
@@ -1631,7 +1630,7 @@ void annealing_move() {
     
     float r = random_float();
 
-    if (r < anneal.p_init) {
+    if (r < anneal.p_reinitialize) {
         init_params(pi);
     } else {
         mutate_params(pi, anneal.mutate_amount);
@@ -1734,7 +1733,7 @@ void solve(GLFWwindow* window) {
         glfwPollEvents();
 
         double start = glfwGetTime();
-        const int iter_per_update = 1000;
+        const int iter_per_update = 5000;
         
         for (int i=0; i<iter_per_update; ++i) {
 
