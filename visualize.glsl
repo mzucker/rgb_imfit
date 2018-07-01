@@ -4,6 +4,8 @@ uniform sampler2D srcTexture;
 uniform sampler2D approxTexture;
 uniform sampler2D errorTexture;
 
+uniform sampler2D palette;
+
 uniform ivec2 outputDims;
 
 void main() {
@@ -15,7 +17,7 @@ void main() {
     ivec2 srcDims = textureSize(srcTexture, 0);
     ivec2 tiledSrcDims = srcDims*tiles;
 
-    ivec2 r = outputDims / srcDims;
+    ivec2 r = outputDims / tiledSrcDims;
     int repeat = max(min(r.x, r.y), 1);
 
     ivec2 m = (outputDims - repeat * tiledSrcDims) / 2;
@@ -37,8 +39,9 @@ void main() {
         } else if (tile == 1) {
             fragColor = texelFetch(approxTexture, p, 0);
         } else {
-            fragColor = texelFetch(errorTexture, p, 0);
-            fragColor.xyz = sqrt(fragColor.xyz);
+            float e = texelFetch(errorTexture, p, 0).x;
+            e = sqrt(e);
+            fragColor = textureLod(palette, vec2(e, 0.5), 0);
         }
 
     } else {

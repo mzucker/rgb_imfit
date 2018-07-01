@@ -2,6 +2,7 @@ out vec4 fragColor;
 
 uniform sampler2D approxTexture;
 uniform sampler2D srcTexture;
+uniform sampler2D weightTexture;
 
 void main() {
 
@@ -10,10 +11,12 @@ void main() {
 
     vec3 approx = clamp(texelFetch(approxTexture, p, 0).xyz, 0., 1.);
     vec3 src = clamp(texelFetch(srcTexture, p0, 0).xyz, 0., 1.);
+    float w = clamp(texelFetch(weightTexture, p0, 0).x, 0., 1.);
 
+    w *= w;
+    
     vec3 diff = src - approx;
 
-    const float w = 1.;
     fragColor = vec4(vec3(dot(diff, diff)*w), w);
 
 }
