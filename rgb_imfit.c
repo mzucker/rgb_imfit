@@ -1979,40 +1979,6 @@ void solve(GLFWwindow* window) {
         annealing_verify();
 
         ++iter_since_printout;
-
-
-        /*
-        double start = glfwGetTime();
-
-        for (size_t i=0; i<num_profile; ++i) {
-
-            compute(do_screenshots);
-            if (do_screenshots) { break; }
-            
-        }
-
-        glFinish();
-
-        double elapsed = glfwGetTime() - start;
-
-        printf("ran %d frames in %.4f seconds (%.4f ms/frame)\n",
-               (int)num_profile, elapsed,
-               1000*elapsed/num_profile);
-
-        
-        float image_size = src_image32f.width * src_image32f.height;
-
-        for (size_t i=0; i<num_tiles; ++i) {
-            size_t offs = 4*i;
-            //printf("reduced_image32f[%d].a = %f\n", (int)i, reduced_image32f.data_32f[offs+3]);
-            require( reduced_image32f.data_32f[offs + 3] == image_size );
-        }
-        
-        return 0;
-        
-        printf("foo!\n");
-        glfwPollEvents();
-        */
         
     }
 
