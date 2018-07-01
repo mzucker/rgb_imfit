@@ -1904,42 +1904,48 @@ void solve(GLFWwindow* window) {
     require(solver == SOLVER_ANNEALING);
     annealing_init();
 
-    int done = 0;
+    double start = glfwGetTime();
+    size_t iter_since_printout = 0;
 
-    while (!done) {
+    const size_t iter_per_vis = 5000;
 
-        memcpy(param_image32f.buf.data,
-               (const char*)anneal.good_params32f.buf.data,
-               param_image32f.buf.size);
+    while (1) {
+
         
-        compute();
+        size_t iteration = anneal.iteration;
+        int do_vis = (iteration % iter_per_vis == 0);
+        //int do_screenshot = (iteration % iter_per_screenshot == 0);
 
-        draw_main(window);
+        if (do_vis) {
+ 
+            double elapsed = glfwGetTime() - start;
+            anneal_info(elapsed, iter_since_printout);
+           
+            memcpy(param_image32f.buf.data,
+                   (const char*)anneal.good_params32f.buf.data,
+                   param_image32f.buf.size);
         
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-
-        double start = glfwGetTime();
-        const int iter_per_update = 5000;
-        
-        for (int i=0; i<iter_per_update; ++i) {
-
-            if (glfwWindowShouldClose(window)) {
-                done = 1;
-                break;
-            }
-
-            annealing_move();
-            
             compute();
-            
-            annealing_verify();
+
+            draw_main(window);
+        
+            glfwSwapBuffers(window);
+            glfwPollEvents();
+            if (glfwWindowShouldClose(window)) { break; }
+
+            start = glfwGetTime();
+            iter_since_printout = 0;
 
         }
 
-        double elapsed = glfwGetTime() - start;
+        annealing_move();
+        
+        compute();
+        
+        annealing_verify();
 
-        anneal_info(elapsed, iter_per_update);
+        ++iter_since_printout;
+
 
         /*
         double start = glfwGetTime();
