@@ -13,6 +13,9 @@
 
 /*  TODO: 
 
+ - use ints instead of floats (~10 bits/param)
+ - use YUV conversion from https://en.wikipedia.org/wiki/YUV#HDTV_with_BT.709
+ - use weights on YUV from http://richg42.blogspot.com/2018/04/bc7-encoding-using-weighted-ycbcr.html
  - ESC to quit?
  - GA instead of annealing?
  - figure out how to better capture fine detail?
@@ -1955,9 +1958,8 @@ void solve(GLFWwindow* window) {
     size_t iteration = 0;
     size_t iter_since_printout = 0;
 
-    const size_t iter_per_vis = 1000;
-    const size_t iter_per_screenshot = 1000;
-
+    const size_t iter_per_vis = 5000;
+    const int screenshots_enabled = 1;
 
     int num_screenshots = 0;
 
@@ -1965,22 +1967,19 @@ void solve(GLFWwindow* window) {
 
         compute();
         
-        int do_vis = iter_per_vis && (iteration % iter_per_vis == 0);
-        int do_screenshot = iter_per_screenshot && (iteration % iter_per_screenshot == 0);
+        int do_vis = (iteration % iter_per_vis == 0);
 
-        if (do_vis || do_screenshot) {
+        if (do_vis) {
  
             double elapsed = glfwGetTime() - start;
             anneal_info(iteration, elapsed, iter_since_printout);
                    
-            if (do_vis) {
-                draw_main(window);
-                glfwSwapBuffers(window);
-                glfwPollEvents();
-                if (glfwWindowShouldClose(window)) { break; }
-            }
+            draw_main(window);
+            glfwSwapBuffers(window);
+            glfwPollEvents();
+            if (glfwWindowShouldClose(window)) { break; }
 
-            if (do_screenshot) {
+            if (screenshots_enabled) {
                 main_fb.request_screenshot = num_screenshots++;
                 draw_main(NULL);
             }
