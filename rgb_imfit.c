@@ -753,7 +753,7 @@ const char* get_extension(const char* filename) {
 //////////////////////////////////////////////////////////////////////
 
 
-void load_image(image_t* dst, const char* filename) {
+void load_image(image_t* dst, const char* filename, int vflip) {
 
     const char* ext = get_extension(filename);
 
@@ -769,19 +769,19 @@ void load_image(image_t* dst, const char* filename) {
     buf_append_file(&tmp, filename, 1024*1024*64, 0);
 
     if (is_png) {
-        read_png(&tmp, 0, dst);
+        read_png(&tmp, vflip, dst);
     } else {
-        read_jpg(&tmp, 0, dst);
+        read_jpg(&tmp, vflip, dst);
     }
 
     buf_free(&tmp);
     
 }
 
-void load_image_32f(image_t* dst, const char* filename) {
+void load_image_32f(image_t* dst, const char* filename, int vflip) {
 
     image_t tmp;
-    load_image(&tmp, filename);
+    load_image(&tmp, filename, vflip);
 
     image8u_to_32f(&tmp, dst);
     printf("converted %s to float\n", filename);
@@ -812,11 +812,11 @@ void get_options(int argc, char** argv) {
         dieusage();
     }
 
-    load_image_32f(&src_image32f, argv[cur_arg]);
+    load_image_32f(&src_image32f, argv[cur_arg], GL_TRUE);
 
     if (cur_arg + 1 < argc) {
         
-        load_image_32f(&weight_image32f, argv[cur_arg+1]);
+        load_image_32f(&weight_image32f, argv[cur_arg+1], GL_TRUE);
 
         printf("weight_image32f.width = %zu, height=%zu, channels=%zu\n",
                weight_image32f.width,
@@ -1260,9 +1260,14 @@ void fb_screenshot(const framebuffer_t* fb) {
     check_opengl_errors("after glReadPixels");
 
     char filename[1024];
-    snprintf(filename, 1024, "%s.png", fb->name);
+
+    if (fb->request_screenshot <= 0) {
+        snprintf(filename, 1024, "%s.png", fb->name);
+    } else {
+        snprintf(filename, 1024, "%s%04d.png", fb->name, fb->request_screenshot-1);
+    }
   
-    write_png(filename, screen, w, h, stride, 0, NULL);
+    write_png(filename, screen, w, h, stride, GL_TRUE, NULL);
 
     free(screen);
 
@@ -1736,14 +1741,12 @@ void setup_framebuffers(GLFWwindow* window) {
     image_create(&reduced_image32f, 1, num_tiles, 4, IMAGE_32F);
     printf("reduced_image32f has size %d\n", (int)reduced_image32f.buf.size);
 
-    int mw, mh;
-    
-    glfwGetFramebufferSize(window, &mw, &mh);
 
     fb_setup(&main_fb,
              "main",
-             mw, mh,
-             GL_NONE,
+             3*src_image32f.width,
+             src_image32f.height,
+             GL_RGBA32F,
              "../visualize.glsl", MAX_SOURCE_LENGTH);
 
     fb_add_input(&main_fb, "srcTexture", src_image32f.bound_texture);
@@ -1908,15 +1911,17 @@ void solve(GLFWwindow* window) {
     size_t iter_since_printout = 0;
 
     const size_t iter_per_vis = 5000;
+    const size_t iter_per_screenshot = 100;
+
+    int num_screenshots = 0;
 
     while (1) {
-
         
         size_t iteration = anneal.iteration;
         int do_vis = (iteration % iter_per_vis == 0);
-        //int do_screenshot = (iteration % iter_per_screenshot == 0);
+        int do_screenshot = (iteration % iter_per_screenshot == 0);
 
-        if (do_vis) {
+        if (do_vis || do_screenshot) {
  
             double elapsed = glfwGetTime() - start;
             anneal_info(elapsed, iter_since_printout);
@@ -1927,11 +1932,17 @@ void solve(GLFWwindow* window) {
         
             compute();
 
-            draw_main(window);
-        
-            glfwSwapBuffers(window);
-            glfwPollEvents();
-            if (glfwWindowShouldClose(window)) { break; }
+            if (do_vis) {
+                draw_main(window);
+                glfwSwapBuffers(window);
+                glfwPollEvents();
+                if (glfwWindowShouldClose(window)) { break; }
+            }
+
+            if (do_screenshot) {
+                main_fb.request_screenshot = num_screenshots++;
+                draw_main(NULL);
+            }
 
             start = glfwGetTime();
             iter_since_printout = 0;

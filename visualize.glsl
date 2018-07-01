@@ -32,8 +32,6 @@ void main() {
         int tile = p.x / srcDims.x;
         p.x -= tile * srcDims.x;
 
-        p.y = tiledSrcDims.y - p.y - 1;
-
         if (tile == 0) {
             fragColor = texelFetch(srcTexture, p, 0);
         } else if (tile == 1) {
