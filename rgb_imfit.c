@@ -62,6 +62,7 @@ typedef struct image {
 
 
 enum {
+    VIS_TILES = 2,
     MAX_INPUTS = 4,
     MAX_UNIFORM_UPDATES = 4,
 };
@@ -1017,7 +1018,7 @@ GLFWwindow* setup_window() {
 
     glfwWindowHint(GLFW_DOUBLEBUFFER, GL_TRUE);
 
-    int w = 3*src_image32f.width, h = src_image32f.height;
+    int w = VIS_TILES*src_image32f.width, h = src_image32f.height;
 
     int k = 1600/w;
     
@@ -1744,7 +1745,7 @@ void setup_framebuffers(GLFWwindow* window) {
 
     fb_setup(&main_fb,
              "main",
-             3*src_image32f.width,
+             VIS_TILES*src_image32f.width,
              src_image32f.height,
              GL_RGBA32F,
              "../visualize.glsl", MAX_SOURCE_LENGTH);
@@ -1910,16 +1911,16 @@ void solve(GLFWwindow* window) {
     double start = glfwGetTime();
     size_t iter_since_printout = 0;
 
-    const size_t iter_per_vis = 5000;
-    const size_t iter_per_screenshot = 100;
+    const size_t iter_per_vis = 1000;
+    const size_t iter_per_screenshot = 1000;
 
     int num_screenshots = 0;
 
     while (1) {
         
         size_t iteration = anneal.iteration;
-        int do_vis = (iteration % iter_per_vis == 0);
-        int do_screenshot = (iteration % iter_per_screenshot == 0);
+        int do_vis = iter_per_vis && (iteration % iter_per_vis == 0);
+        int do_screenshot = iter_per_screenshot && (iteration % iter_per_screenshot == 0);
 
         if (do_vis || do_screenshot) {
  

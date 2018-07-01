@@ -1,6 +1,5 @@
 out vec4 fragColor;
 
-uniform sampler2D srcTexture;
 uniform sampler2D approxTexture;
 uniform sampler2D errorTexture;
 
@@ -12,9 +11,9 @@ void main() {
 
     ivec2 p = ivec2(gl_FragCoord.xy);
 
-    const ivec2 tiles = ivec2(3, 1);
+    const ivec2 tiles = ivec2(2, 1);
     
-    ivec2 srcDims = textureSize(srcTexture, 0);
+    ivec2 srcDims = textureSize(approxTexture, 0);
     ivec2 tiledSrcDims = srcDims*tiles;
 
     ivec2 r = outputDims / tiledSrcDims;
@@ -33,8 +32,6 @@ void main() {
         p.x -= tile * srcDims.x;
 
         if (tile == 0) {
-            fragColor = texelFetch(srcTexture, p, 0);
-        } else if (tile == 1) {
             fragColor = texelFetch(approxTexture, p, 0);
         } else {
             float e = texelFetch(errorTexture, p, 0).x;
