@@ -13,15 +13,15 @@
 
 /*  TODO: 
 
- - use ints instead of floats (~10 bits/param)
- - use YUV conversion from https://en.wikipedia.org/wiki/YUV#HDTV_with_BT.709
- - use weights on YUV from http://richg42.blogspot.com/2018/04/bc7-encoding-using-weighted-ycbcr.html
- - ESC to quit?
- - GA instead of annealing?
- - figure out how to better capture fine detail?
- - resize input using mipmapping
+    - use ints instead of floats (~10 bits/param)
+    - use YUV conversion from https://en.wikipedia.org/wiki/YUV#HDTV_with_BT.709
+    - use weights on YUV from http://richg42.blogspot.com/2018/04/bc7-encoding-using-weighted-ycbcr.html
+    - ESC to quit?
+    - GA instead of annealing?
+    - figure out how to better capture fine detail?
+    - resize input using mipmapping
 
- */
+*/
 
 //////////////////////////////////////////////////////////////////////
 // TYPEDEFS/ENUMS
@@ -41,7 +41,8 @@ enum {
 
 typedef enum image_type {
     IMAGE_8U,
-    IMAGE_32F
+    IMAGE_32F,
+    IMAGE_32U
 } image_type_t;
 
 typedef struct image {
@@ -56,9 +57,10 @@ typedef struct image {
     buffer_t buf;
     
     union {
-        void* data;
-        unsigned char* data_8u;
-        float* data_32f;
+        void*     data;
+        uint8_t*  data_8u;
+        float*    data_32f;
+        uint32_t* data_32u;
     };
     
 } image_t;
@@ -155,7 +157,7 @@ image_t src_image32f;
 image_t weight_image32f;
 image_t palette_image32f;
 
-image_t param_image32f;
+image_t param_image32u;
 
 float px;
 
@@ -185,38 +187,40 @@ typedef struct anneal_info {
 anneal_info_t anneal;
 
 enum {
+
     GABOR_PARAM_U = 0,
     GABOR_PARAM_V,
-    GABOR_PARAM_S,
-    GABOR_PARAM_T,
-    GABOR_PARAM_PHI0,
-    GABOR_PARAM_PHI1,
-    GABOR_PARAM_PHI2,
+    GABOR_PARAM_RESERVED0,
+    
+    GABOR_PARAM_PHI,
     GABOR_PARAM_R,
+    GABOR_PARAM_RESERVED1,
+    
     GABOR_PARAM_H0,
     GABOR_PARAM_H1,
     GABOR_PARAM_H2,
+    
+    GABOR_PARAM_S,
+    GABOR_PARAM_T,
     GABOR_PARAM_L,
-    GABOR_NUM_PARAMS,
-    GABOR_NUM_NORMAL = 6
+
+    GABOR_NUM_PARAMS, 
+    
+    GABOR_PARAM_BITS = 10,
+    GABOR_PARAMS_PER_UINT32 = 3,
+    GABOR_UINT32_ELEMENTS = 4,
+    GABOR_PARAM_MASK = (1 << GABOR_PARAM_BITS) - 1,
 };
 
-
-const int normal_params[GABOR_NUM_NORMAL] = {
-    GABOR_PARAM_U,
-    GABOR_PARAM_V,
-    GABOR_PARAM_PHI0,
-    GABOR_PARAM_PHI1,
-    GABOR_PARAM_PHI2,
-    GABOR_PARAM_R,
-};
 
 
 const char* param_names[GABOR_NUM_PARAMS] = {
     "u", "v", "s", "t",
-    "phi0", "phi1", "phi2", "r",
+    "phi", "r",
     "h0", "h1", "h2", "l"
 };
+
+/*
 
 const float t0_scl = 1;
 const float t1_scl = 4;
@@ -224,21 +228,10 @@ const float t1_scl = 4;
 const float l0_scl = 2;
 const float l1_scl = 8;
 
-// u, v, s, t | phi[3], r | h[3], l
-float param_bounds[GABOR_NUM_PARAMS][2] = {
-    { -2, 2 },
-    { -2, 2 },
-    { 0, 2 }, // s special
-    { 0, 1 }, // t special
-    { 0, 2*M_PI },
-    { 0, 2*M_PI },
-    { 0, 2*M_PI },
-    { 0, 2*M_PI },
-    { 0, 2 }, // h0 special
-    { 0, 2 }, // h1 special
-    { 0, 2 }, // h2 special
-    { 0, 1 } // l special
-};
+float hwmax = MAX(src_image32f.width, src_image32f.height);
+px = 2.0 / hwmax;
+
+*/
 
 //////////////////////////////////////////////////////////////////////
 
@@ -444,10 +437,13 @@ void image_create(image_t* image,
 
     switch (type)  {
     case IMAGE_8U:
-        image->element_size = 1;
+        image->element_size = sizeof(uint8_t);
         break;
     case IMAGE_32F:
         image->element_size = sizeof(float);
+        break;
+    case IMAGE_32U:
+        image->element_size = sizeof(uint32_t);
         break;
     default:
         require( 0 && "bad image type in image_create!" );
@@ -594,8 +590,8 @@ int write_png(const char* filename,
     fclose(fp);
 
     /*
-    fprintf(stderr, "wrote %s with size %dx%d\n", filename,
-            (int)ncols, (int)nrows);
+      fprintf(stderr, "wrote %s with size %dx%d\n", filename,
+      (int)ncols, (int)nrows);
     */
 
     return 1;
@@ -981,41 +977,48 @@ void error_callback(int error, const char* description) {
 //////////////////////////////////////////////////////////////////////
 
 GLenum gl_datatype(image_type_t type) {
-    require( type == IMAGE_8U || type == IMAGE_32F );
+    require( type == IMAGE_8U || type == IMAGE_32F || type == IMAGE_32U );
     if (type == IMAGE_8U) {
         return GL_UNSIGNED_BYTE;
-    } else {
+    } else if (type == IMAGE_32F) {
         return GL_FLOAT;
+    } else {
+        return GL_UNSIGNED_INT;
     }
+
+}
+//////////////////////////////////////////////////////////////////////
+
+GLenum gl_format(size_t channels,
+                 image_type_t datatype) {
+    
+    require(channels >= 1 && channels <= 4 );
+    require( channels >= 1 && channels <= 4 );
+
+    static const GLenum tbl[3][4] = {
+        { GL_RED,  GL_RG,  GL_RGB, GL_RGBA },
+        { GL_RED,  GL_RG,  GL_RGB, GL_RGBA },
+        { GL_RED_INTEGER, GL_RG_INTEGER, GL_RGB_INTEGER, GL_RGBA_INTEGER }
+    };
+
+    return tbl[datatype][channels-1];
 }
 
 //////////////////////////////////////////////////////////////////////
 
-GLenum gl_format(size_t channels) {
-    require( channels == 1 || channels == 3 || channels == 4 );
-    if (channels == 1) {
-        return GL_RED;
-    } else if (channels == 3) {
-        return GL_RGB;
-    } else {
-        return GL_RGBA;
-    }
-}
+GLenum gl_internal_format(size_t channels,
+                          image_type_t datatype) {
 
-//////////////////////////////////////////////////////////////////////
+    require(channels >= 1 && channels <= 4 );
+    require((int)datatype >= 0 && (int)datatype < 3);
 
-GLenum gl_internal_format(GLenum format, GLenum datatype) {
+    static const GLenum tbl[3][4] = {
+        { GL_R8,    GL_RG8,    GL_RGB8,    GL_RGBA8 },
+        { GL_R32F,  GL_RG32F,  GL_RGB32F,  GL_RGBA32F },
+        { GL_R32UI, GL_RG32UI, GL_RGB32UI, GL_RGBA32UI }
+    };
 
-    require(format == GL_RED || format == GL_RGB || format == GL_RGBA);
-    require(datatype == GL_UNSIGNED_BYTE || datatype == GL_FLOAT);
-
-    if (format == GL_RED) {
-        return datatype == GL_FLOAT ? GL_R32F : GL_R8;
-    } else if (format == GL_RGB) {
-        return datatype == GL_FLOAT ? GL_RGB32F : GL_RGB8;
-    } else {
-        return datatype == GL_FLOAT ? GL_RGBA32F : GL_RGBA8;
-    }
+    return tbl[datatype][channels-1];
     
 }
 
@@ -1023,7 +1026,7 @@ GLenum gl_internal_format(GLenum format, GLenum datatype) {
 
 void upload_texture(const image_t* image) {
 
-    GLenum format = gl_format(image->channels);
+    GLenum format = gl_format(image->channels, image->type);
     GLenum datatype = gl_datatype(image->type);
 
     glBindTexture(GL_TEXTURE_2D, image->bound_texture);
@@ -1033,7 +1036,7 @@ void upload_texture(const image_t* image) {
                     format, datatype,
                     image->buf.data);
     
-    check_opengl_errors("upload texture32f!");
+    check_opengl_errors("upload texture!");
 
 
 }
@@ -1063,10 +1066,8 @@ GLuint make_texture(image_t* image) {
                     GL_TEXTURE_WRAP_T,
                     GL_CLAMP_TO_EDGE);
     
-    GLenum format = gl_format(image->channels);
-    GLenum datatype = gl_datatype(image->type);
-    GLenum internal_format = gl_internal_format(format, datatype);
-        
+    GLenum internal_format = gl_internal_format(image->channels, image->type);
+
     glTexStorage2D(GL_TEXTURE_2D, 1, internal_format,
                    image->width, image->height);
 
@@ -1086,7 +1087,7 @@ void read_pixels(image_t* image) {
 
     size_t w = image->width, h = image->height;
 
-    GLenum format = gl_format(image->channels);
+    GLenum format = gl_format(image->channels, image->type);
     GLenum datatype = gl_datatype(image->type);
     
     glReadPixels(0, 0, w, h, format, datatype, image->data);
@@ -1271,18 +1272,18 @@ void fb_setup(framebuffer_t* fb,
     glUseProgram(program);
 
     /*
-    GLint count;
-    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &count);
-    printf("Active Uniforms: %d\n", count);
+      GLint count;
+      glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &count);
+      printf("Active Uniforms: %d\n", count);
 
-    for (GLint i = 0; i < count; i++) {
-        char name[1024];
-        GLsizei length;
-        GLint size;
-        GLenum type;
-        glGetActiveUniform(program, i, 1024, &length, &size, &type, name);
-        printf("Uniform #%d Type: %u Name: %s\n", i, type, name);
-    }    
+      for (GLint i = 0; i < count; i++) {
+      char name[1024];
+      GLsizei length;
+      GLint size;
+      GLenum type;
+      glGetActiveUniform(program, i, 1024, &length, &size, &type, name);
+      printf("Uniform #%d Type: %u Name: %s\n", i, type, name);
+      }    
     */
     
 
@@ -1518,74 +1519,62 @@ void draw_main(GLFWwindow* window) {
 
 //////////////////////////////////////////////////////////////////////
 
-void init_params(float pi[GABOR_NUM_PARAMS]) {
+void init_params(uint32_t pi[GABOR_UINT32_ELEMENTS]) {
 
-    const float s0 = param_bounds[GABOR_PARAM_S][0];
-    const float s1 = param_bounds[GABOR_PARAM_S][1];
-    const float h1 = param_bounds[GABOR_PARAM_H0][1];
+    for (int j=0; j<GABOR_UINT32_ELEMENTS; ++j) {
+        pi[j] = pcg32_random();
+    }
     
-    for (int j=0; j<GABOR_NUM_PARAMS; ++j) {
-        pi[j] = random_float();
-    }
-
-    for (int k=0; k<GABOR_NUM_NORMAL; ++k) {
-        int j = normal_params[k];
-        pi[j] = lerp(param_bounds[j][0], param_bounds[j][1], pi[j]);
-    }
-
-    for (int k=0; k<3; ++k) {
-        float h = pi[GABOR_PARAM_H0+k];
-        h = h * h * h;
-        h *= h1;
-        pi[GABOR_PARAM_H0+k] = h;
-    }
-
-    float y = pi[GABOR_PARAM_S];
-    float x = y*y*y; //cbrt( y*(s13 - s03) + s03 )
-    float s = lerp(s0, s1, x);
-    float t = s * lerp(t0_scl, t1_scl, pi[GABOR_PARAM_T]);
-    float l = s * lerp(l0_scl, l1_scl, pi[GABOR_PARAM_L]);
-
-    pi[GABOR_PARAM_S] = s;
-    pi[GABOR_PARAM_T] = t;
-    pi[GABOR_PARAM_L] = l;
-        
-    require(l >= l0_scl*s);
-    require(l <= l1_scl*s);
-        
-    require(t >= t0_scl*s);
-    require(t <= t1_scl*s);
-
 }
 
 
 //////////////////////////////////////////////////////////////////////
 
-void mutate_params(float pi[GABOR_NUM_PARAMS], float amount) {
+void mutate_params(uint32_t pi[GABOR_UINT32_ELEMENTS], float amount) {
 
-    float mybounds[GABOR_NUM_PARAMS][2];
-    memcpy(mybounds, param_bounds, sizeof(mybounds));
+    int pidx = 0;
 
-    for (int j=0; j<GABOR_NUM_PARAMS; ++j) {
+    for (int el=0; el<GABOR_UINT32_ELEMENTS; ++el) {
         
-        const float* lohi = mybounds[j];
-        pi[j] += amount * (lohi[1]-lohi[0]) * signed_random3();
-
-        if (j < GABOR_PARAM_PHI0 || j > GABOR_PARAM_R) {
-            pi[j] = clamp(pi[j], lohi[0], lohi[1]);
-        } else {
-            pi[j] = wrap2pi(pi[j]);
-        }
+        uint32_t u_in = pi[el];
+        uint32_t u_out = 0;
         
-        if (j == GABOR_PARAM_S) {
-            float s = pi[j];
-            mybounds[GABOR_PARAM_T][0] = s * t0_scl;
-            mybounds[GABOR_PARAM_T][1] = s * t1_scl;
-            mybounds[GABOR_PARAM_L][0] = s * l0_scl;
-            mybounds[GABOR_PARAM_L][1] = s * l1_scl;
+        for (int j=0; j<GABOR_PARAMS_PER_UINT32; ++j) {
+            
+            uint32_t param = (u_in >> j*GABOR_PARAM_BITS) & GABOR_PARAM_MASK;
+
+            int perturb = (signed_random3() * amount) * 1023;
+
+            if (pidx == GABOR_PARAM_PHI || pidx == GABOR_PARAM_R) {
+                
+                param = (param + perturb) & GABOR_PARAM_MASK;
+                
+            } else if (pidx != GABOR_PARAM_RESERVED0 &&
+                       pidx != GABOR_PARAM_RESERVED1) {
+                
+                int32_t sparam = (int32_t)param + perturb;
+                
+                sparam = (sparam < 0 ? 0 :
+                          sparam > GABOR_PARAM_MASK ? GABOR_PARAM_MASK :
+                          sparam);
+                
+                param = sparam;
+                
+            }
+        
+            require( param <= GABOR_PARAM_MASK );
+
+            u_out |= (param << j*GABOR_PARAM_BITS);
+
+            ++pidx;
+            
         }
+
+        pi[el] = u_out;
         
     }
+
+        require(pidx == GABOR_NUM_PARAMS);
     
 }
 
@@ -1619,22 +1608,22 @@ GLuint setup_textures() {
     //////////////////////////////////////////////////////////////////////
     // setup param texture
 
-    float hwmax = MAX(src_image32f.width, src_image32f.height);
-    px = 2.0 / hwmax;
-
-    param_bounds[GABOR_PARAM_S][0] = 0.5*px;
-    
-    image_create(&param_image32f, gabors_per_tile*3, num_tiles, 4, IMAGE_32F);
+    require( GABOR_UINT32_ELEMENTS == 4 );
+    require( GABOR_PARAM_BITS * GABOR_PARAMS_PER_UINT32 < 32 );
+    require( GABOR_PARAM_BITS * GABOR_NUM_PARAMS < 32 * GABOR_UINT32_ELEMENTS );
+             
+    image_create(&param_image32u, gabors_per_tile, num_tiles,
+                 GABOR_UINT32_ELEMENTS, IMAGE_32U);
 
     for (int pidx=0; pidx<num_tiles; ++pidx) {
         for (int midx=0; midx<gabors_per_tile; ++midx) {
             int i = pidx * gabors_per_tile + midx;
-            float* pi = param_image32f.data_32f + i*GABOR_NUM_PARAMS;
+            uint32_t* pi = param_image32u.data_32u + i*GABOR_UINT32_ELEMENTS;
             init_params(pi);
         }
     }
 
-    return make_texture(&param_image32f);
+    return make_texture(&param_image32u);
 
 }
 
@@ -1703,7 +1692,7 @@ void setup_framebuffers(GLFWwindow* window) {
              GL_RGBA32F,
              "../gabor_eval.glsl", MAX_SOURCE_LENGTH);
 
-    fb_add_input(&gabor_eval_fb, "paramTexture", param_image32f.bound_texture);
+    fb_add_input(&gabor_eval_fb, "paramTexture", param_image32u.bound_texture);
 
     float fdims[2] = { src_image32f.width, src_image32f.height };
     
@@ -1818,7 +1807,7 @@ void setup_framebuffers(GLFWwindow* window) {
 
 void compute() {
 
-    upload_texture(&param_image32f);
+    upload_texture(&param_image32u);
 
     fb_draw(&gabor_eval_fb);
     fb_draw(&gabor_compare_fb);
@@ -1853,7 +1842,7 @@ void anneal_init() {
     anneal.p_reinitialize = 0.01;
     anneal.mutate_amount = 0.01;
 
-    image_copy(&anneal.good_params32f, &param_image32f);
+    image_copy(&anneal.good_params32f, &param_image32u);
 
 }
 
@@ -1890,14 +1879,14 @@ void anneal_update(size_t iteration) {
         anneal.prev_cost = cur_cost;
 
         memcpy(anneal.good_params32f.buf.data,
-               (const char*)param_image32f.buf.data,
-               param_image32f.buf.size);
+               (const char*)param_image32u.buf.data,
+               param_image32u.buf.size);
         
     } else {
         
-        memcpy(param_image32f.buf.data,
+        memcpy(param_image32u.buf.data,
                (const char*)anneal.good_params32f.buf.data,
-               param_image32f.buf.size);
+               param_image32u.buf.size);
         
     }
 
@@ -1915,7 +1904,7 @@ void anneal_update(size_t iteration) {
             int midx = pcg32_random_r(&rng_global) % gabors_per_tile;
             int i = midx + pidx * gabors_per_tile;
         
-            float* pi = param_image32f.data_32f + i*GABOR_NUM_PARAMS;
+            uint32_t* pi = param_image32u.data_32u + i*GABOR_UINT32_ELEMENTS;
         
             float r = random_float();
         
