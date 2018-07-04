@@ -138,10 +138,6 @@ void random_float_sign(float* x, float* s) {
     *x = (float)(r >> 1) / (float)(UINT32_MAX >> 1);
 }
 
-float lerp(float a, float b, float u) {
-    return a + u*(b-a);
-}
-
 float signed_random() {
     return random_float()*2-1;
 }
@@ -156,16 +152,6 @@ float signed_random3() {
     float x, s;
     random_float_sign(&x, &s);
     return x*x*x*s;
-}
-
-//////////////////////////////////////////////////////////////////////
-
-float clamp(float x, float minval, float maxval) {
-    return x < minval ? minval : x > maxval ? maxval : x;
-}
-
-float wrap2pi(float x) {
-    return fmod(x, 2*M_PI);
 }
 
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -403,7 +389,6 @@ GLuint setup_textures() {
     palette_image32f.buf.alloc = palette_image32f.buf.size;
 
     make_texture(&palette_image32f);
-    
 
     //////////////////////////////////////////////////////////////////////
     // setup param texture
@@ -1081,7 +1066,6 @@ const float* magma_data() {
 
 int main(int argc, char** argv) {
 
-
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
@@ -1090,7 +1074,6 @@ int main(int argc, char** argv) {
     get_options(argc, argv);    
 
     GLFWwindow* window = setup_window();
-
 
     setup_textures();
              
