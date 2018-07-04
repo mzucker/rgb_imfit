@@ -26,7 +26,13 @@ if (CURL_FOUND)
   add_definitions(-DST_GLFW_USE_CURL)
 endif(CURL_FOUND)
 
-add_executable(rgb_imfit rgb_imfit.c)
+set(SOURCES
+  src/rgb_imfit.c
+  src/require.c src/buffer.c src/image.c
+  src/gl_util.c src/framebuffer.c src/pcg_tiny.c)  
+
+add_executable(rgb_imfit ${SOURCES})
+
 target_link_libraries(rgb_imfit glfw
   ${GLEW_LIBRARIES} ${OPENGL_LIBRARIES} png jpeg m)
 
