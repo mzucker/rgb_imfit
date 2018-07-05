@@ -754,7 +754,11 @@ void solve(GLFWwindow* window) {
     size_t iteration = 0;
     size_t iter_since_printout = 0;
 
+#ifdef __APPLE__
+    const size_t iter_per_vis = 400;
+#else
     const size_t iter_per_vis = 5000;
+#endif
     const int screenshots_enabled = 1;
 
     int num_screenshots = 0;
